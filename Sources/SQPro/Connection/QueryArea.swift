@@ -35,7 +35,7 @@ struct QueryArea: View {
                 }
             } bottom: {
                 if let document = tab.selectedQuery {
-                    ResultsPanel(document: document)
+                    ResultsPanel(tab: tab, document: document)
                 }
             }
         } bottom: {

@@ -63,6 +63,7 @@ import Testing
 
     @Test func quoting() {
         #expect(SQL.quoteIdentifier("we`ird") == "`we``ird`")
-        #expect(SQL.quoteString("it's \\ ok") == "'it\\'s \\\\ ok'")
+        #expect(SQL.quoteString("it's \\ ok") == "'it''s \\\\ ok'")
+        #expect(SQL.quoteString("it's \\ ok", backslashEscapes: false) == "'it''s \\ ok'")
     }
 }

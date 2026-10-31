@@ -206,11 +206,12 @@ public enum SQL {
         "`" + name.replacingOccurrences(of: "`", with: "``") + "`"
     }
 
-    /// `'value'` with quotes and backslashes escaped.
-    public static func quoteString(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
+    /// `'value'` with `'` doubled, which works in every SQL mode. Backslashes are doubled too unless the
+    /// server runs with `NO_BACKSLASH_ESCAPES`, where a backslash is just a character.
+    public static func quoteString(_ value: String, backslashEscapes: Bool = true) -> String {
+        var escaped = value
+        if backslashEscapes { escaped = escaped.replacingOccurrences(of: "\\", with: "\\\\") }
+        escaped = escaped.replacingOccurrences(of: "'", with: "''")
         return "'\(escaped)'"
     }
 

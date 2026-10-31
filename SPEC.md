@@ -95,6 +95,6 @@ Autocomplete, export (CSV / JSON / SQL INSERT), saved queries.
 2. ✅ Home screen, groups, add/edit connection, Keychain
 3. ✅ Connection tab: schema sidebar, query tabs, editor, shortcuts, Action Output
 4. ✅ Result grid, result tabs, Form Editor / Field Types / Query Stats
-5. Editing, Apply/Revert, confirm dialog
+5. ✅ Editing, Apply/Revert, confirm dialog
 6. MCP server
 7. Phase 2

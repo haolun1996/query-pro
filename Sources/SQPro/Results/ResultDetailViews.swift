@@ -20,7 +20,11 @@ struct FormEditorView: View {
                                 Text(column.name)
                                     .foregroundStyle(.secondary)
                                     .gridColumnAlignment(.trailing)
-                                value(resultTab.value(atVisibleRow: row, column: index))
+                                if resultTab.canEdit(column: index) && resultTab.rowState(atVisibleRow: row) != .deleted {
+                                    FormField(resultTab: resultTab, row: row, column: index)
+                                } else {
+                                    value(resultTab.value(atVisibleRow: row, column: index))
+                                }
                                 Text(column.typeName.lowercased())
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
@@ -76,6 +80,47 @@ struct FormEditorView: View {
 
     private func select(_ row: Int) {
         resultTab.selectedRows = IndexSet(integer: row)
+    }
+}
+
+/// One editable value in the Form Editor. Multi-line text is fine here; NULL has its own button.
+private struct FormField: View {
+    let resultTab: ResultTab
+    let row: Int
+    let column: Int
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    private var current: String? { resultTab.value(atVisibleRow: row, column: column) }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            TextField(current == nil ? "NULL" : "", text: $text, axis: .vertical)
+                .font(.system(.body, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...8)
+                .focused($isFocused)
+                .onSubmit(commit)
+                .onChange(of: isFocused) { if !isFocused { commit() } }
+                .background(resultTab.isEdited(atVisibleRow: row, column: column) ? Color.blue.opacity(0.25) : .clear,
+                            in: .rect(cornerRadius: 5))
+            Button("NULL") {
+                resultTab.setValue(nil, atVisibleRow: row, column: column)
+                text = ""
+            }
+            .controlSize(.small)
+            .disabled(current == nil)
+            .help("Set to NULL")
+        }
+        .onAppear { text = current ?? "" }
+        .onChange(of: row) { text = current ?? "" }
+        .onChange(of: resultTab.version) { if !isFocused { text = current ?? "" } }
+    }
+
+    private func commit() {
+        // An untouched NULL stays NULL instead of becoming ''.
+        if current == nil && text.isEmpty { return }
+        resultTab.setValue(text, atVisibleRow: row, column: column)
     }
 }
 

@@ -10,6 +10,8 @@ public struct ColumnInfo: Hashable, Sendable {
     public var isPrimaryKey: Bool
     public var isNotNull: Bool
     public var isBinary: Bool
+    /// MySQL fills it in on INSERT, so new rows leave it alone.
+    public var isAutoIncrement: Bool = false
 }
 
 public struct QueryResult: Sendable {

@@ -101,3 +101,47 @@ struct SQLCodeView: NSViewRepresentable {
         textView.rehighlight()
     }
 }
+
+/// Editable, syntax-coloured SQL bound to a string, e.g. the Apply dialog's script.
+struct SQLTextEditor: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        let textView = SQLTextView.make()
+        textView.highlightsCurrentStatement = false
+        textView.textContainerInset = NSSize(width: 8, height: 10)
+        textView.delegate = context.coordinator
+        scrollView.documentView = textView
+        textView.string = text
+        textView.rehighlight()
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? SQLTextView, textView.string != text else { return }
+        textView.string = text
+        textView.rehighlight()
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? SQLTextView else { return }
+            textView.rehighlight()
+            text.wrappedValue = textView.string
+        }
+    }
+}

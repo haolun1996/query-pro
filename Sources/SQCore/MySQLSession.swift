@@ -54,7 +54,9 @@ public actor MySQLSession {
                 typeName: Self.typeName(definition.columnType),
                 isPrimaryKey: definition.flags.contains(.PRIMARY_KEY),
                 isNotNull: definition.flags.contains(.COLUMN_NOT_NULL),
-                isBinary: Self.isBinary(definition)
+                isBinary: Self.isBinary(definition),
+                // AUTO_INCREMENT_FLAG (0x200); mysql-nio has no named constant for it.
+                isAutoIncrement: definition.flags.rawValue & 0x200 != 0
             )
         }
         let rows = command.rows.map { values in

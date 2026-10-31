@@ -407,11 +407,97 @@ final class ConnectionTab: Identifiable {
         if let document, !newResults.isEmpty {
             document.results = newResults
             document.selectedResultID = newResults.first?.id
+            for resultTab in newResults { await prepareEditing(resultTab) }
         }
         await refreshCurrentSchema()
         if statements.contains(where: Self.changesSchemaList) {
             try? await reloadSchemas()
         }
+    }
+
+    // MARK: Editing results
+
+    /// A result is editable when all its table columns come from one table and include that table's primary key.
+    func prepareEditing(_ resultTab: ResultTab) async {
+        let columns = resultTab.result.columns
+        let sources = Set(columns.filter { !$0.table.isEmpty }.map { [$0.schema, $0.table] })
+        guard sources.count == 1, let source = sources.first, !source[0].isEmpty else {
+            resultTab.readOnlyReason = sources.isEmpty
+                ? "Read only: the result doesn't come from a table."
+                : "Read only: the result combines more than one table."
+            return
+        }
+        let (schema, table) = (source[0], source[1])
+        guard let metaSession else { return }
+        do {
+            let keys = try await metaSession.execute("""
+                SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = \(SQL.quoteString(schema)) AND TABLE_NAME = \(SQL.quoteString(table))
+                  AND CONSTRAINT_NAME = 'PRIMARY'
+                ORDER BY ORDINAL_POSITION
+                """).rows.compactMap { $0.first ?? nil }
+            guard !keys.isEmpty else {
+                resultTab.readOnlyReason = "Read only: \(table) has no primary key."
+                return
+            }
+            let fromTable = columns.indices.filter { columns[$0].table == table && !columns[$0].originalName.isEmpty }
+            let keyColumns = keys.compactMap { key in fromTable.first { columns[$0].originalName.lowercased() == key.lowercased() } }
+            guard keyColumns.count == keys.count else {
+                resultTab.readOnlyReason = "Read only: select the primary key (\(keys.joined(separator: ", "))) to edit."
+                return
+            }
+            let mode = try await metaSession.execute("SELECT @@SESSION.sql_mode").rows.first?.first ?? nil
+            resultTab.editTarget = ResultTab.EditTarget(
+                schema: schema, table: table, primaryKey: keyColumns, editableColumns: Set(fromTable),
+                backslashEscapes: !(mode ?? "").contains("NO_BACKSLASH_ESCAPES")
+            )
+            resultTab.readOnlyReason = nil
+        } catch {
+            resultTab.readOnlyReason = "Read only: \(ErrorText.message(for: error))"
+        }
+    }
+
+    /// Runs the (possibly hand-edited) change script in one transaction, then reloads the result.
+    /// Returns the error message if anything failed; everything is rolled back in that case.
+    func applyChanges(_ script: String, to resultTab: ResultTab, in document: QueryDocument) async -> String? {
+        guard let querySession, !isRunning else { return "Another query is still running." }
+        isRunning = true
+        defer { isRunning = false }
+
+        let statements = SQL.statements(in: script).map(\.text)
+        guard !statements.isEmpty else { return "There are no statements to run." }
+        do {
+            _ = try await querySession.execute("START TRANSACTION")
+            for statement in statements {
+                let entry = appendLog(action: Self.oneLine(statement), response: "Running…", status: .running)
+                do {
+                    let result = try await querySession.execute(statement)
+                    updateLog(entry, response: result.summary, status: .success, duration: result.duration)
+                } catch {
+                    updateLog(entry, response: ErrorText.message(for: error), status: .error, duration: nil)
+                    throw error
+                }
+            }
+            _ = try await querySession.execute("COMMIT")
+            appendLog(action: "COMMIT", response: "\(statements.count) statement(s) applied", status: .success)
+        } catch {
+            _ = try? await querySession.execute("ROLLBACK")
+            appendLog(action: "ROLLBACK", response: "Changes were not applied", status: .error)
+            return ErrorText.message(for: error)
+        }
+
+        // Reload so new rows show their generated ids and defaults.
+        if let fresh = try? await querySession.execute(resultTab.result.sql),
+           let index = document.results.firstIndex(where: { $0.id == resultTab.id }) {
+            let replacement = ResultTab(title: resultTab.title, result: fresh, appliedLimit: resultTab.appliedLimit)
+            replacement.filter = resultTab.filter
+            document.results[index] = replacement
+            document.selectedResultID = replacement.id
+            await prepareEditing(replacement)
+        } else {
+            resultTab.revert()
+        }
+        return nil
     }
 
     private static func changesSchemaList(_ sql: String) -> Bool {

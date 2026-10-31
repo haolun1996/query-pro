@@ -8,6 +8,10 @@ import SQCore
 ///     SQPRO_OPEN="Local POS"          open this saved connection
 ///     SQPRO_OPEN_TEMP=root@localhost:3306   or a throwaway one that is never saved
 ///     SQPRO_SQL="select 1;"           put this in the editor and run it
+///     SQPRO_DEMO_EDITS=1              after SQPRO_SQL: edit a cell, add a row, mark a row deleted (in memory)
+///     SQPRO_DEMO_EDITS=fail           …and also set a column to NULL
+///     SQPRO_DEMO_VALUE="…"            the text written into the edited cell
+///     SQPRO_APPLY=1                   then apply them for real and print the outcome (scratch databases only!)
 ///     SQPRO_TABLE_INFO=pos.admins     open that table's info tab
 ///     SQPRO_TABLE_SECTION=Indexes     …on this section
 ///     SQPRO_SNAPSHOT=/path/out.png    save the window as a PNG, then quit
@@ -34,6 +38,35 @@ enum DebugSnapshot {
                 }
                 tab.selectedQuery?.text = sql
                 tab.run(.all)
+                if environment["SQPRO_DEMO_EDITS"] != nil {
+                    for _ in 0..<50 where tab.selectedQuery?.selectedResult?.isEditable != true {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    if let result = tab.selectedQuery?.selectedResult, let column = result.editTarget?.editableColumns.max() {
+                        result.setValue(environment["SQPRO_DEMO_VALUE"] ?? "edited value", atVisibleRow: 0, column: column)
+                        if result.visibleRows.count > 1 { result.deleteRows([1]) }
+                        if let row = result.insertRow(), let first = result.firstEditableColumn {
+                            result.setValue("new", atVisibleRow: row, column: first)
+                        }
+                        // SQPRO_DEMO_EDITS=fail also sets the first editable column to NULL, to test rollback
+                        // on a NOT NULL column.
+                        if environment["SQPRO_DEMO_EDITS"] == "fail", let first = result.firstEditableColumn {
+                            result.setValue(nil, atVisibleRow: 0, column: first)
+                        }
+                        // SQPRO_APPLY=1: run Apply and print the script and the outcome.
+                        if environment["SQPRO_APPLY"] != nil, let document = tab.selectedQuery {
+                            for _ in 0..<50 where tab.isRunning {
+                                try? await Task.sleep(for: .milliseconds(100))
+                            }
+                            let script = result.changeScript()
+                            print("SCRIPT:\n\(script)")
+                            let failure = await tab.applyChanges(script, to: result, in: document)
+                            print("OUTCOME: \(failure ?? "applied")")
+                            print("AFTER: \(document.selectedResult?.result.rows ?? [])")
+                            print("CHANGES LEFT: \(document.selectedResult?.hasChanges ?? false)")
+                        }
+                    }
+                }
             }
             if let target = environment["SQPRO_TABLE_INFO"], let tab = workspace.selectedTab {
                 for _ in 0..<50 where !isConnected(tab) {

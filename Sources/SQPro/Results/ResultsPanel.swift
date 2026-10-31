@@ -3,7 +3,9 @@ import SQCore
 
 /// The results area of a query tab: header, the selected view, result tabs, and the side tabs.
 struct ResultsPanel: View {
+    let tab: ConnectionTab
     @Bindable var document: QueryDocument
+    @State private var applying: ResultTab?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -17,10 +19,27 @@ struct ResultsPanel: View {
                     ContentUnavailableView("No results", systemImage: "tablecells", description: Text("Run a query with ⌘↩"))
                 }
                 Divider()
-                ResultTabBar(document: document)
+                HStack(spacing: 6) {
+                    ResultTabBar(document: document)
+                    if let result = document.selectedResult, result.isEditable {
+                        Button("Revert") { result.revert() }
+                            .disabled(!result.hasChanges)
+                            .help("Discard all changes in this result")
+                        Button("Apply") { applying = result }
+                            .buttonStyle(.borderedProminent)
+                            .tint(tab.profile.color.isProduction ? .red : .accentColor)
+                            .disabled(!result.hasChanges || tab.isRunning)
+                            .help("Review and run the changes")
+                    }
+                }
+                .controlSize(.small)
+                .padding(.trailing, 8)
             }
             Divider()
             SideTabs(selection: $document.resultMode)
+        }
+        .sheet(item: $applying) { result in
+            ApplyChangesSheet(tab: tab, document: document, resultTab: result)
         }
     }
 
@@ -30,6 +49,7 @@ struct ResultsPanel: View {
                 .font(.callout.bold())
             if document.resultMode == .grid || document.resultMode == .form {
                 FilterRowsField(text: Bindable(result).filter)
+                EditButtons(result: result)
             }
             Spacer()
             Text(result.countText)
@@ -44,10 +64,48 @@ struct ResultsPanel: View {
     @ViewBuilder
     private func content(_ result: ResultTab) -> some View {
         switch document.resultMode {
-        case .grid: ResultGrid(resultTab: result)
+        case .grid:
+            ResultGrid(resultTab: result) { row in
+                // Multi-line values are easier to edit in the Form Editor.
+                result.selectedRows = IndexSet(integer: row)
+                document.resultMode = .form
+            }
         case .form: FormEditorView(resultTab: result)
         case .fieldTypes: FieldTypesView(result: result.result)
         case .stats: QueryStatsView(resultTab: result)
+        }
+    }
+}
+
+/// "Edit: + −" next to Filter Rows, or why the result is read-only.
+private struct EditButtons: View {
+    let result: ResultTab
+
+    var body: some View {
+        if result.isEditable {
+            HStack(spacing: 2) {
+                Text("Edit:")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button("Add Row", systemImage: "plus.rectangle") {
+                    if let row = result.insertRow(), let column = result.firstEditableColumn {
+                        result.pendingEdit = (row, column)
+                    }
+                }
+                .help("Add a row")
+                Button("Delete Rows", systemImage: "minus.rectangle") {
+                    result.deleteRows(result.selectedRows)
+                }
+                .disabled(result.selectedRows.isEmpty)
+                .help("Delete the selected rows (Delete key)")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+        } else if let reason = result.readOnlyReason {
+            Label("Read Only", systemImage: "lock")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .help(reason)
         }
     }
 }
