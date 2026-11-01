@@ -62,8 +62,10 @@ final class ConnectionsModel {
         copy.id = UUID()
         copy.name = "\(profile.name) copy"
         Task {
-            if let password = await Keychain.password(for: profile.id) {
-                await Keychain.setPassword(password, for: copy.id)
+            for kind in [Keychain.Kind.connection, .mcp] {
+                if let password = await Keychain.password(for: profile.id, kind: kind) {
+                    await Keychain.setPassword(password, for: copy.id, kind: kind)
+                }
             }
         }
         let index = profiles.firstIndex { $0.id == profile.id }.map { $0 + 1 } ?? profiles.endIndex
@@ -73,7 +75,10 @@ final class ConnectionsModel {
 
     func delete(_ profile: ConnectionProfile) {
         profiles.removeAll { $0.id == profile.id }
-        Task { await Keychain.deletePassword(for: profile.id) }
+        Task {
+            await Keychain.deletePassword(for: profile.id)
+            await Keychain.deletePassword(for: profile.id, kind: .mcp)
+        }
         persist()
     }
 

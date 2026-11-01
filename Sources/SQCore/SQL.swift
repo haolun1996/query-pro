@@ -167,6 +167,42 @@ public enum SQL {
         return (sql + "\nLIMIT \(limit)", true)
     }
 
+    /// `true` for a statement that only reads: SELECT / WITH … SELECT / SHOW / DESCRIBE / EXPLAIN / TABLE,
+    /// without INTO (files, variables) or locking clauses. Used to keep AI clients read-only;
+    /// the caller should still run it inside a read-only transaction.
+    public static func isReadOnly(_ sql: String) -> Bool {
+        let utf16 = Array(sql.utf16)
+        let code = tokenize(sql).filter { $0.kind != .whitespace && $0.kind != .comment }
+        guard let first = code.first, first.kind == .keyword || first.kind == .identifier else { return false }
+        func word(_ token: SQLToken) -> String {
+            String(utf16CodeUnits: Array(utf16[token.range]), count: token.range.count).uppercased()
+        }
+        let start = word(first)
+        guard ["SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "TABLE"].contains(start) else { return false }
+        // One statement only: a `;` may end it but nothing may follow.
+        if let semicolon = code.firstIndex(where: { $0.kind == .semicolon }), semicolon != code.count - 1 { return false }
+
+        let forbidden: Set<String> = ["INTO", "FOR", "LOCK", "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP",
+                                      "ALTER", "TRUNCATE", "RENAME", "GRANT", "REVOKE", "CALL", "HANDLER", "LOAD", "SET"]
+        var depth = 0
+        for token in code.dropFirst() {
+            switch token.kind {
+            case .openParen: depth += 1
+            case .closeParen: depth -= 1
+            case .keyword, .identifier:
+                let keyword = word(token)
+                // SHOW … FOR user, and LOCK appearing inside SHOW output names, are fine.
+                if start == "SHOW", keyword == "FOR" || keyword == "LOCK" { continue }
+                if forbidden.contains(keyword), depth == 0 || ["INTO", "INSERT", "UPDATE", "DELETE", "REPLACE"].contains(keyword) {
+                    return false
+                }
+            default:
+                break
+            }
+        }
+        return true
+    }
+
     /// Uppercases keywords and starts the main clauses of each statement on a new line.
     public static func beautify(_ text: String) -> String {
         let utf16 = Array(text.utf16)

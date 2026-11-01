@@ -66,4 +66,26 @@ import Testing
         #expect(SQL.quoteString("it's \\ ok") == "'it''s \\\\ ok'")
         #expect(SQL.quoteString("it's \\ ok", backslashEscapes: false) == "'it''s \\ ok'")
     }
+
+    @Test func readOnlyStatements() {
+        for sql in [
+            "select * from t", "SELECT 1;", "  -- note\n select a from b where c = 'update'", "show tables",
+            "SHOW GRANTS FOR CURRENT_USER", "describe t", "desc t", "explain select * from t",
+            "with x as (select 1) select * from x", "select count(*) from (select id from t) s", "table t",
+        ] {
+            #expect(SQL.isReadOnly(sql), "\(sql)")
+        }
+    }
+
+    @Test func writesAndTricksAreNotReadOnly() {
+        for sql in [
+            "update t set a = 1", "delete from t", "insert into t values (1)", "drop table t",
+            "select 1; drop table t", "select * from t into outfile '/tmp/x'", "select 1 into @x",
+            "select * from t for update", "select * from t lock in share mode",
+            "with x as (select 1) delete from t", "explain delete from t", "explain analyze update t set a = 1",
+            "set @a = 1", "call proc()", "", "-- only a comment", "(select 1) union (select 1 into @y)",
+        ] {
+            #expect(!SQL.isReadOnly(sql), "\(sql)")
+        }
+    }
 }

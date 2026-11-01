@@ -7,12 +7,13 @@ import SQCore
 struct QueryArea: View {
     @Bindable var tab: ConnectionTab
     @Environment(ConnectionsModel.self) private var connections
+    @Environment(MCPController.self) private var mcp
 
     static let rowLimits: [Int?] = [nil, 10, 50, 100, 200, 300, 400, 500, 1000, 2000, 5000, 10000, 50000]
 
     var body: some View {
         // Results and Action Output stay hidden until there is something to show.
-        VerticalSplit(storageKey: "actionOutputHeight", defaultBottomHeight: 150, showsBottom: !tab.log.isEmpty) {
+        VerticalSplit(storageKey: "actionOutputHeight", defaultBottomHeight: 150, showsBottom: showsBottomPanel) {
             VerticalSplit(
                 storageKey: "resultsHeight",
                 defaultBottomHeight: 260,
@@ -39,8 +40,13 @@ struct QueryArea: View {
                 }
             }
         } bottom: {
-            ActionOutputView(tab: tab)
+            BottomPanelView(tab: tab)
         }
+    }
+
+    /// Hidden until there is something to show, or the AI Activity panel was asked for.
+    private var showsBottomPanel: Bool {
+        !tab.log.isEmpty || tab.bottomPanel == .aiActivity || !mcp.activity(for: tab.profile.id).isEmpty
     }
 
     // MARK: Toolbar

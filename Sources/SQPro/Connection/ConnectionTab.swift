@@ -40,6 +40,13 @@ final class ConnectionTab: Identifiable {
     var selectedQueryID: QueryDocument.ID?
     private var queryCounter = 0
 
+    enum BottomPanel {
+        case output, aiActivity
+    }
+
+    /// Which view the bottom panel shows.
+    var bottomPanel = BottomPanel.output
+
     // Running
     private(set) var isRunning = false
     private(set) var log: [ActionLogEntry] = []
@@ -48,9 +55,6 @@ final class ConnectionTab: Identifiable {
 
     private var querySession: MySQLSession?
     private var metaSession: MySQLSession?
-
-    /// MySQL's built-in schemas. Every user can see them, but only root needs them in the sidebar.
-    private static let systemSchemas: Set<String> = ["information_schema", "performance_schema", "mysql", "sys"]
 
     init(profile: ConnectionProfile) {
         self.profile = profile
@@ -107,9 +111,7 @@ final class ConnectionTab: Identifiable {
 
     func reloadSchemas() async throws {
         guard let metaSession else { return }
-        let names = try await metaSession.execute("SHOW DATABASES").rows
-            .compactMap { $0.first ?? nil }
-            .filter { profile.user == "root" || !Self.systemSchemas.contains($0.lowercased()) }
+        let names = profile.visibleSchemas(try await metaSession.execute("SHOW DATABASES").rows.compactMap { $0.first ?? nil })
         let expanded = Set(schemas.filter(\.isExpanded).map(\.name))
         schemas = names.map { SchemaNode(name: $0) }
         for schema in schemas where expanded.contains(schema.name) {

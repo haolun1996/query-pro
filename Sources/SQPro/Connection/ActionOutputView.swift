@@ -1,6 +1,44 @@
 import SwiftUI
 
-/// The Action Output panel: one row per statement run, like Workbench's.
+/// The bottom of a connection tab: Action Output (statements you ran) or AI Activity (what Claude ran here).
+struct BottomPanelView: View {
+    @Bindable var tab: ConnectionTab
+    @Environment(MCPController.self) private var mcp
+
+    var body: some View {
+        let aiEntries = mcp.activity(for: tab.profile.id)
+        VStack(spacing: 0) {
+            HStack {
+                Picker("Panel", selection: $tab.bottomPanel) {
+                    Text("Action Output").tag(ConnectionTab.BottomPanel.output)
+                    Text(aiEntries.isEmpty ? "AI Activity" : "AI Activity (\(aiEntries.count))").tag(ConnectionTab.BottomPanel.aiActivity)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                Spacer()
+                if tab.bottomPanel == .output {
+                    Button("Clear", systemImage: "trash") { tab.clearLog() }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .disabled(tab.log.isEmpty)
+                        .help("Clear the output")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+
+            switch tab.bottomPanel {
+            case .output: ActionOutputView(tab: tab)
+            case .aiActivity: MCPActivityTable(entries: aiEntries, showsConnection: false)
+            }
+        }
+    }
+}
+
+/// The Action Output table: one row per statement run, like Workbench's.
 struct ActionOutputView: View {
     let tab: ConnectionTab
 
@@ -8,21 +46,6 @@ struct ActionOutputView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Action Output")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Clear", systemImage: "trash") { tab.clearLog() }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .disabled(tab.log.isEmpty)
-                    .help("Clear the output")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-
             Table(tab.log.reversed()) {
                 TableColumn("") { entry in
                     statusIcon(entry.status)

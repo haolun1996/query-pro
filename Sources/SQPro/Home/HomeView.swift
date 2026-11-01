@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import SQCore
 
@@ -5,6 +6,7 @@ import SQCore
 struct HomeView: View {
     @Environment(ConnectionsModel.self) private var model
     @Environment(Workspace.self) private var workspace
+    @Environment(MCPController.self) private var mcp
 
     @State private var editor: EditorRequest?
     @State private var renaming: GroupRename?
@@ -103,6 +105,12 @@ struct HomeView: View {
                 Divider()
                 Button("Edit Connection…") { editor = EditorRequest(profile: profile, isNew: false) }
                 Button("Duplicate") { model.duplicate(profile) }
+                if profile.mcpAccess != .hidden {
+                    Button("Copy Claude Code Command") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(mcp.claudeCodeCommand(for: profile), forType: .string)
+                    }
+                }
                 Menu("Move to Group") {
                     ForEach(model.groups.filter { $0 != profile.groupName }, id: \.self) { group in
                         Button(group) { model.move(profile.id, toGroup: group) }

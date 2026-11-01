@@ -44,6 +44,7 @@ struct TabStrip: View {
             }
 
             // Empty space behaves like a normal title bar: drag to move, double-click to zoom.
+
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())

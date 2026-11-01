@@ -18,6 +18,7 @@ Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh`.
 | Path | What |
 |---|---|
 | `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
+| `Sources/SQMCP` | No UI. `MCPHTTPServer` (NIO HTTP on 127.0.0.1, one endpoint per connection at `/mcp/<connection id>` with its own bearer token, one MCP session per client, adapted from swift-sdk's conformance server) and `SQLTools` (six tools scoped to one connection). Talks to the app through `MCPProvider` |
 | `Sources/SQPro/App` | `SQProApp`, `Workspace` (tabs), `ConnectionsModel` (saved connections), `TabStrip`, `QueryCommands` (menus + shortcuts), `SettingsView`, `DebugSnapshot` |
 | `Sources/SQPro/Home` | Home screen: connection cards, groups, add/edit form |
 | `Sources/SQPro/Connection` | `ConnectionTab` (model for one open connection), schema sidebar, query area, table info tab, Action Output |
@@ -44,6 +45,18 @@ Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh`.
   table and include its whole primary key. Edits are overlays (`RowEdits`) on the original rows; `ChangeScript`
   (SQCore, unit-tested) turns them into SQL that finds rows by their *original* key values. Apply runs the script in
   one transaction, rolls back on any error, then re-runs the result's SQL.
+- **MCP safety**: `run_query` must pass `SQL.isReadOnly` (one statement, no INTO/FOR UPDATE/writes) *and* runs inside
+  `START TRANSACTION READ ONLY` with `MAX_EXECUTION_TIME`. `execute` needs `mcpAccess == .readWrite`; red connections
+  call `MCPProvider.approveWrite` (an NSAlert, Deny is default). Every tool call opens its own MySQL connection.
+  A connection may set `mcpUser` (separate MySQL login for AI, password under `Keychain.Kind.mcp`); `SQLTools.asAI`
+  swaps it in for every tool call, so MySQL grants limit the AI. `SQPRO_REQUIRE_MYSQL=1 swift test` makes the
+  local-MySQL login tests fail instead of skip when the server is down.
+  Each connection is its own MCP server: tokens live in UserDefaults `mcpTokens` (connection id → token), created on
+  first "Copy Claude Code Command"; a token only opens its own `/mcp/<id>`. The command has no `--scope`, so Claude
+  Code adds it to the project it's run in. Per-connection MCP UI lives in each connection tab (`MCPConnectionButton`
+  popover, and the bottom panel's AI Activity view); Settings only has the server switch and port.
+  `MCPActivity.connectionID` drives those filters.
+  Test with curl: initialize → read `Mcp-Session-Id` → `notifications/initialized` → `tools/call`; responses are SSE.
 - MySQL 8 reserves words like `empty`; a 1064 error from a test query may be the query, not the app.
 - Non-root users don't see `information_schema`, `performance_schema`, `mysql`, `sys` in the sidebar.
 

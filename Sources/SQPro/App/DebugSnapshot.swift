@@ -12,6 +12,7 @@ import SQCore
 ///     SQPRO_DEMO_EDITS=fail           …and also set a column to NULL
 ///     SQPRO_DEMO_VALUE="…"            the text written into the edited cell
 ///     SQPRO_APPLY=1                   then apply them for real and print the outcome (scratch databases only!)
+///     SQPRO_BOTTOM=ai                 show the AI Activity panel
 ///     SQPRO_TABLE_INFO=pos.admins     open that table's info tab
 ///     SQPRO_TABLE_SECTION=Indexes     …on this section
 ///     SQPRO_SNAPSHOT=/path/out.png    save the window as a PNG, then quit
@@ -68,6 +69,7 @@ enum DebugSnapshot {
                     }
                 }
             }
+            if environment["SQPRO_BOTTOM"] == "ai" { workspace.selectedTab?.bottomPanel = .aiActivity }
             if let target = environment["SQPRO_TABLE_INFO"], let tab = workspace.selectedTab {
                 for _ in 0..<50 where !isConnected(tab) {
                     try? await Task.sleep(for: .milliseconds(100))
