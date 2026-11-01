@@ -5,7 +5,7 @@ import NIOSSL
 
 public enum SessionError: Error, LocalizedError {
     case notConnected
-    /// The connection dropped while a statement was running. SQ Pro reconnected, but can't know whether it ran.
+    /// The connection dropped while a statement was running. Querywell reconnected, but can't know whether it ran.
     case lostDuringStatement
     /// The connection dropped inside a transaction; the server rolled the transaction back.
     case lostTransaction
@@ -15,9 +15,9 @@ public enum SessionError: Error, LocalizedError {
         case .notConnected:
             "Not connected to the server."
         case .lostDuringStatement:
-            "The connection to the server was lost while this statement was running. SQ Pro has reconnected; check whether the statement took effect before running it again."
+            "The connection to the server was lost while this statement was running. Querywell has reconnected; check whether the statement took effect before running it again."
         case .lostTransaction:
-            "The connection to the server was lost during an open transaction, so the server rolled it back. SQ Pro has reconnected; nothing since START TRANSACTION was saved."
+            "The connection to the server was lost during an open transaction, so the server rolled it back. Querywell has reconnected; nothing since START TRANSACTION was saved."
         }
     }
 }

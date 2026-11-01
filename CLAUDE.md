@@ -1,4 +1,4 @@
-# SQ Pro
+# Querywell
 
 Native macOS MySQL client (macOS 26+, Liquid Glass). Workbench-style layout, only the features we use.
 `SPEC.md` is the product spec and build order; keep its ✅ list current.
@@ -6,12 +6,17 @@ Native macOS MySQL client (macOS 26+, Liquid Glass). Workbench-style layout, onl
 ## Build and run
 
 ```
-scripts/bundle.sh --debug --open   # build dist/SQ Pro.app, quit the running copy, launch it
+scripts/bundle.sh --debug --open   # build dist/Querywell.app, quit the running copy, launch it
 swift test                         # SQCore + SQMCP tests (SQL parsing, autocomplete, export, Keychain, MCP tools)
 .build/debug/sqcheck localhost 3306 root "" "select 1"   # CLI connection check; password from SQ_PASSWORD
 ```
 
 Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh`.
+`swift scripts/make-icon.swift` rebuilds `Resources/AppIcon.icns` from `Resources/AppIcon-source.png` (agy-generated).
+
+The app was renamed from "SQ Pro" to **Querywell**, but only the visible name changed. Module/target names (`SQPro`),
+the executable, bundle id `app.sqpro.SQPro`, Keychain service `app.sqpro.password`, `Application Support/SQPro`,
+UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would orphan saved connections and passwords.
 
 ## Layout
 
@@ -82,7 +87,7 @@ There is no Screen Recording permission, so `screencapture` fails. Use the debug
 
 ```
 SQPRO_OPEN="Local POS" SQPRO_SQL="select * from pos.admins limit 5;" \
-SQPRO_SNAPSHOT=/path/out.png "dist/SQ Pro.app/Contents/MacOS/SQPro"
+SQPRO_SNAPSHOT=/path/out.png "dist/Querywell.app/Contents/MacOS/SQPro"
 ```
 
 Also `SQPRO_OPEN_TEMP=root@localhost:3306` (throwaway connection, never saved), `SQPRO_TABLE_INFO=schema.table`,

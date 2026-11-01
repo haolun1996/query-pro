@@ -1,4 +1,4 @@
-# SQ Pro — spec
+# Querywell — spec
 
 A native macOS MySQL client. Workbench-style layout, Liquid Glass look, only the features we use.
 
@@ -19,7 +19,7 @@ Sources/
   sqcheck/   CLI connection check: sqcheck <host> <port> <user> [schema] [sql]
 Tests/SQCoreTests/
 Resources/Info.plist
-scripts/bundle.sh   → dist/SQ Pro.app (ad-hoc signed)
+scripts/bundle.sh   → dist/Querywell.app (ad-hoc signed)
 ```
 
 ```
@@ -112,7 +112,7 @@ One level only. A group exists while at least one connection is in it.
   delimiter auto-detected, header row toggle, columns auto-mapped by name, per-column mapping or skip, empty → NULL,
   text NULL → NULL, duplicates stop / skip (INSERT IGNORE) / replace (REPLACE). Runs on its own connection in one
   transaction with batched INSERTs, progress and Stop; any error rolls everything back and names the batch's line.
-  Reads UTF-8 (BOM ok) or Windows-1252. SQ Pro's own CSV export imports back losslessly (NULL vs '').
+  Reads UTF-8 (BOM ok) or Windows-1252. Querywell's own CSV export imports back losslessly (NULL vs '').
 
 ## Build order
 1. ✅ Driver check (`sqcheck`)

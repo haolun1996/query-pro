@@ -30,7 +30,7 @@ let package = Package(
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
         ]),
-        // The app. Built into dist/SQ Pro.app by scripts/bundle.sh.
+        // The app. Built into dist/Querywell.app by scripts/bundle.sh.
         .executableTarget(
             name: "SQPro",
             dependencies: ["SQCore", "SQMCP"],

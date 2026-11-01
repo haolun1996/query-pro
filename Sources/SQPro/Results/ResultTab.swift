@@ -26,7 +26,7 @@ final class ResultTab: Identifiable {
     let id = UUID()
     let title: String
     let result: QueryResult
-    /// The `LIMIT` SQ Pro added, if any.
+    /// The `LIMIT` Querywell added, if any.
     let appliedLimit: Int?
     let executedAt = Date()
 

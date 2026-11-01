@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import SQCore
 
-/// App settings (SQ Pro › Settings…, ⌘,).
+/// App settings (Querywell › Settings…, ⌘,).
 struct SettingsView: View {
     @AppStorage(SettingsKey.showsDDL) private var showsDDL = true
     @Environment(MCPController.self) private var mcp

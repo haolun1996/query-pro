@@ -225,7 +225,7 @@ final class ConnectionTab: Identifiable {
         guard let querySession, await querySession.takeReconnectNotice() else { return }
         appendLog(
             action: "Reconnect",
-            response: "The server had closed the connection, so SQ Pro reconnected. Session variables and temporary tables were reset.",
+            response: "The server had closed the connection, so Querywell reconnected. Session variables and temporary tables were reset.",
             status: .success
         )
     }

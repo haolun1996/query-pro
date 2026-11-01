@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the SQPro executable and assemble an ad-hoc-signed dist/SQ Pro.app around it.
+# Build the SQPro executable and assemble an ad-hoc-signed dist/Querywell.app around it.
 #
 #   scripts/bundle.sh            # release build
 #   scripts/bundle.sh --debug    # debug build
@@ -33,7 +33,7 @@ scratch="${SCRATCH_PATH:-.build-bundle}"
 swift build -c "$config" --product SQPro --scratch-path "$scratch"
 bin="$(swift build -c "$config" --product SQPro --scratch-path "$scratch" --show-bin-path)"
 
-app="dist/SQ Pro.app"
+app="dist/Querywell.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
