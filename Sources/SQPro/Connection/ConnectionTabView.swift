@@ -31,6 +31,16 @@ struct ConnectionTabView: View {
             }
         }
         .sheet(isPresented: $tab.needsPassword) { passwordSheet }
+        .sheet(item: $tab.importJob) { job in
+            CSVImportSheet(tab: tab, job: job)
+                // Closing mid-import would hide the progress; Stop first.
+                .interactiveDismissDisabled(isImporting(job))
+        }
+    }
+
+    private func isImporting(_ job: CSVImportJob) -> Bool {
+        if case .running = job.phase { return true }
+        return false
     }
 
     private var passwordSheet: some View {

@@ -7,7 +7,7 @@ Native macOS MySQL client (macOS 26+, Liquid Glass). Workbench-style layout, onl
 
 ```
 scripts/bundle.sh --debug --open   # build dist/SQ Pro.app, quit the running copy, launch it
-swift test                         # SQCore tests (SQL parsing, Keychain round trip)
+swift test                         # SQCore + SQMCP tests (SQL parsing, autocomplete, export, Keychain, MCP tools)
 .build/debug/sqcheck localhost 3306 root "" "select 1"   # CLI connection check; password from SQ_PASSWORD
 ```
 
@@ -17,12 +17,12 @@ Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh`.
 
 | Path | What |
 |---|---|
-| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
+| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `SQLCompletion` (autocomplete context + suggestions), `ResultExport` (CSV/JSON/INSERT), `CSV`/`CSVImportPlan` (import), `QueryHistoryStore`, `SavedQuery`/`SavedQueryStore`, `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
 | `Sources/SQMCP` | No UI. `MCPHTTPServer` (NIO HTTP on 127.0.0.1, one endpoint per connection at `/mcp/<connection id>` with its own bearer token, one MCP session per client, adapted from swift-sdk's conformance server) and `SQLTools` (six tools scoped to one connection). Talks to the app through `MCPProvider` |
-| `Sources/SQPro/App` | `SQProApp`, `Workspace` (tabs), `ConnectionsModel` (saved connections), `TabStrip`, `QueryCommands` (menus + shortcuts), `SettingsView`, `DebugSnapshot` |
+| `Sources/SQPro/App` | `SQProApp`, `Workspace` (tabs), `ConnectionsModel` (saved connections), `SavedQueriesModel`, `TabStrip`, `QueryCommands` (menus + shortcuts), `SettingsView`, `DebugSnapshot` |
 | `Sources/SQPro/Home` | Home screen: connection cards, groups, add/edit form |
-| `Sources/SQPro/Connection` | `ConnectionTab` (model for one open connection), schema sidebar, query area, table info tab, Action Output |
-| `Sources/SQPro/Editor` | `SQLTextView` (TextKit 1), line number ruler, theme, SwiftUI wrappers |
+| `Sources/SQPro/Connection` | `ConnectionTab` (model for one open connection), schema sidebar, query area, table info tab, Action Output, History, CSV import sheet |
+| `Sources/SQPro/Editor` | `SQLTextView` (TextKit 1), `CompletionPopup` (autocomplete list), line number ruler, theme, SwiftUI wrappers |
 | `Sources/SQPro/Results` | `ResultTab` (one result set + filter/sort/edits), `ResultGrid` (NSTableView), results panel, Form Editor / Field Types / Query Stats |
 
 ## Conventions
@@ -57,6 +57,22 @@ Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh`.
   popover, and the bottom panel's AI Activity view); Settings only has the server switch and port.
   `MCPActivity.connectionID` drives those filters.
   Test with curl: initialize → read `Mcp-Session-Id` → `notifications/initialized` → `tools/call`; responses are SSE.
+- **Autocomplete**: `SQLCompletion` (SQCore, unit-tested) does all parsing; `CompletionController` is only the
+  window. The list is a child `NSPanel` that never becomes key, so the text view keeps focus and forwards ↑↓/Return/
+  Tab/Esc through `doCommand(by:)`. Any change to its `items` must reload the table at once (it lays out even while
+  hidden and would index past the end). `ConnectionTab` is the `CompletionSource`: it loads one schema's tables and
+  columns at a time on `metaSession`, and every waiting editor is called back when loading finishes.
+- **Reconnect** lives in `MySQLSession` (actor): `reviveIfNeeded` pings after 30 s idle (closing the channel after
+  5 s so a dead socket can't hang), `isConnectionLost` classifies errors, `SQL.useTarget` + `remember(database:)` keep
+  the schema, and the OK packet's `SERVER_STATUS_IN_TRANS` decides whether a drop must be reported
+  (`SessionError.lostTransaction`). Only read-only statements are retried. `ReconnectTests` drop the connection with
+  `KILL` against local MySQL.
+- **History** is JSON Lines, appended per statement (`ConnectionTab.recordHistory`), loaded only when the panel opens.
+  Always pass SQL through `QueryHistoryStore.redacted` first.
+- **CSV import** runs on a fresh `MySQLSession` (the tab keeps its password in memory for this), never the query
+  session, so the editor stays usable. `CSV.parse` returns `nil` for unquoted empty / `\N` fields so NULL and ''
+  survive a round trip with `ResultExport.csv`.
+- `sqcheck` prompts for a password on a TTY-less stdin unless `SQ_PASSWORD` is set: use `SQ_PASSWORD="" … </dev/null`.
 - MySQL 8 reserves words like `empty`; a 1064 error from a test query may be the query, not the app.
 - Non-root users don't see `information_schema`, `performance_schema`, `mysql`, `sys` in the sidebar.
 
@@ -70,8 +86,14 @@ SQPRO_SNAPSHOT=/path/out.png "dist/SQ Pro.app/Contents/MacOS/SQPro"
 ```
 
 Also `SQPRO_OPEN_TEMP=root@localhost:3306` (throwaway connection, never saved), `SQPRO_TABLE_INFO=schema.table`,
-`SQPRO_TABLE_SECTION=Indexes`, `SQPRO_DEMO_EDITS=1` (in-memory edits, never applied), `SQPRO_SNAPSHOT_DELAY=4`. The capture uses `cacheDisplay`, so translucent materials
-and list separators may not appear exactly as on screen.
+`SQPRO_TABLE_SECTION=Indexes`, `SQPRO_DEMO_EDITS=1` (in-memory edits, never applied), `SQPRO_SNAPSHOT_DELAY=4`,
+`SQPRO_TYPE="select * from ad"` (types key by key and prints the autocomplete list), `SQPRO_SAVED_QUERIES=1|save`,
+`SQPRO_BOTTOM=history`, `SQPRO_DROP_SQL` (kill the query connection, then run SQL: tests reconnect),
+`SQPRO_IMPORT=schema.table:/file.csv` (+ `SQPRO_IMPORT_RUN=1`, `SQPRO_IMPORT_DUPLICATES=skip`; scratch databases only).
+Temp connections write history files under a random id; delete them after testing.
+Other windows (popovers, the autocomplete list) are saved next to it as `out-1.png` …. The capture uses
+`cacheDisplay`, so glass, translucent materials and list separators don't appear as on screen. Don't `pkill` the
+test copy by path: it also kills the user's running app; let `SQPRO_SNAPSHOT` quit it.
 
 Data: connections in `~/Library/Application Support/SQPro/connections.json`, passwords in the login keychain under
 service `app.sqpro.password`, account = profile id.

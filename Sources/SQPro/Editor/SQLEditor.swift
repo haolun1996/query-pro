@@ -4,6 +4,8 @@ import SwiftUI
 /// SwiftUI wrapper around `SQLTextView`, kept in sync with a `QueryDocument`.
 struct SQLEditor: NSViewRepresentable {
     let document: QueryDocument
+    /// Schema data for autocomplete.
+    var completionSource: CompletionSource?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(document: document)
@@ -20,6 +22,7 @@ struct SQLEditor: NSViewRepresentable {
         let textView = SQLTextView.make()
         textView.delegate = context.coordinator
         textView.string = document.text
+        textView.completionSource = completionSource
         scrollView.documentView = textView
 
         let ruler = LineNumberRuler(textView: textView)
@@ -72,6 +75,7 @@ struct SQLEditor: NSViewRepresentable {
             guard let textView = notification.object as? SQLTextView else { return }
             document.selection = textView.selectedRange()
             textView.updateCurrentStatement()
+            textView.selectionDidChange()
         }
     }
 }

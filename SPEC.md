@@ -88,7 +88,31 @@ One level only. A group exists while at least one connection is in it.
 - Results capped (e.g. 500 rows). AI activity log panel.
 
 ## Phase 2
-Autocomplete, export (CSV / JSON / SQL INSERT), saved queries.
+- **Autocomplete** in the query editor, while typing (or Esc / ⌥Esc / ⌃Space): tables after FROM/JOIN/UPDATE/INTO,
+  columns of the statement's tables, `alias.` / `table.` / `schema.table.` columns, `schema.` tables, schemas after USE,
+  keywords and functions. ↑↓ choose, Return/Tab insert, Esc closes. Names that need it get backticks. Columns load
+  per schema on first use (current schema preloaded) and reload with the schema tree.
+- **Export** (⤴ next to the row count): the rows shown (filter + sort, no unsaved edits) as CSV, JSON or SQL INSERT,
+  to a file or the clipboard. Grid context menu: Copy Rows As CSV / JSON / SQL INSERT for the selection.
+- **Saved queries** (bookmark button, ⌥⌘O; ⌥⌘S saves the selection or whole editor): per connection or for all
+  connections; open in a new tab (or the empty current one), insert at cursor, rename, replace SQL, delete.
+  Stored in `~/Library/Application Support/SQPro/saved-queries.json`.
+
+## Phase 3
+- **Reconnect**: sessions reconnect by themselves when the server dropped the connection (idle timeout, sleep,
+  network change). After 30 s idle a ping (5 s timeout) checks the connection first; the schema (`USE`) is kept.
+  A read-only statement that hits a dropped connection is retried once; anything else is never re-run blindly.
+  A connection lost inside a transaction is reported (the server rolled it back), not silently replaced.
+  Action Output shows a "Reconnect" line.
+- **Query history** (clock button, ⌘Y; History in the bottom panel): every statement run from the editor and every
+  applied change, per connection, kept across launches (newest 5,000), searchable. Double-click opens in a query tab;
+  insert at cursor, copy, delete, clear. Passwords in `IDENTIFIED BY` / `SET PASSWORD` are masked before saving.
+  Stored in `~/Library/Application Support/SQPro/history/<connection id>.jsonl`; deleted with the connection.
+- **CSV import** (table context menu → Import CSV…, or Query → Import CSV into Table… for the selected table):
+  delimiter auto-detected, header row toggle, columns auto-mapped by name, per-column mapping or skip, empty → NULL,
+  text NULL → NULL, duplicates stop / skip (INSERT IGNORE) / replace (REPLACE). Runs on its own connection in one
+  transaction with batched INSERTs, progress and Stop; any error rolls everything back and names the batch's line.
+  Reads UTF-8 (BOM ok) or Windows-1252. SQ Pro's own CSV export imports back losslessly (NULL vs '').
 
 ## Build order
 1. ✅ Driver check (`sqcheck`)
@@ -97,4 +121,5 @@ Autocomplete, export (CSV / JSON / SQL INSERT), saved queries.
 4. ✅ Result grid, result tabs, Form Editor / Field Types / Query Stats
 5. ✅ Editing, Apply/Revert, confirm dialog
 6. ✅ MCP server
-7. Phase 2
+7. ✅ Phase 2
+8. ✅ Phase 3: reconnect, query history, CSV import

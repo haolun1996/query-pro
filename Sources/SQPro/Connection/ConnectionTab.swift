@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import UniformTypeIdentifiers
 import Observation
 import SQCore
 
@@ -40,8 +42,14 @@ final class ConnectionTab: Identifiable {
     var selectedQueryID: QueryDocument.ID?
     private var queryCounter = 0
 
+    /// The Saved Queries popover, and whether it opens on its save form.
+    var showsSavedQueries = false {
+        didSet { if !showsSavedQueries { savesNewQuery = false } }
+    }
+    var savesNewQuery = false
+
     enum BottomPanel {
-        case output, aiActivity
+        case output, history, aiActivity
     }
 
     /// Which view the bottom panel shows.
@@ -55,6 +63,22 @@ final class ConnectionTab: Identifiable {
 
     private var querySession: MySQLSession?
     private var metaSession: MySQLSession?
+    /// Kept in memory for extra sessions (CSV import); never written anywhere.
+    @ObservationIgnored private var password: String?
+
+    // History: loaded from disk the first time the History panel opens. Newest first.
+    private(set) var history: [HistoryEntry] = []
+    @ObservationIgnored private var historyLoaded = false
+    @ObservationIgnored private lazy var historyStore = QueryHistoryStore(connectionID: profile.id)
+
+    /// The CSV import sheet.
+    var importJob: CSVImportJob?
+
+    // Autocomplete: tables and columns per schema, loaded on first use and dropped when the schema list reloads.
+    @ObservationIgnored private var completionTables: [String: [CompletionCatalog.Table]] = [:]
+    @ObservationIgnored private var completionLoading: Set<String> = []
+    /// Editors waiting for the schemas being loaded.
+    @ObservationIgnored private var completionWaiters: [() -> Void] = []
 
     init(profile: ConnectionProfile) {
         self.profile = profile
@@ -82,6 +106,7 @@ final class ConnectionTab: Identifiable {
     func connect(password: String?) async {
         state = .connecting
         needsPassword = false
+        self.password = password
         await disconnect()
         let query = MySQLSession(profile: profile, password: password)
         let meta = MySQLSession(profile: profile, password: password)
@@ -94,6 +119,7 @@ final class ConnectionTab: Identifiable {
             try await reloadSchemas()
             await refreshCurrentSchema()
             state = .connected
+            preloadCompletion()
         } catch {
             state = .failed(ErrorText.message(for: error))
             needsPassword = ErrorText.isAccessDenied(error)
@@ -111,6 +137,7 @@ final class ConnectionTab: Identifiable {
 
     func reloadSchemas() async throws {
         guard let metaSession else { return }
+        completionTables.removeAll()
         let names = profile.visibleSchemas(try await metaSession.execute("SHOW DATABASES").rows.compactMap { $0.first ?? nil })
         let expanded = Set(schemas.filter(\.isExpanded).map(\.name))
         schemas = names.map { SchemaNode(name: $0) }
@@ -190,6 +217,54 @@ final class ConnectionTab: Identifiable {
     private func refreshCurrentSchema() async {
         guard let querySession else { return }
         currentSchema = (try? await querySession.execute("SELECT DATABASE()"))?.rows.first?.first ?? nil
+        await querySession.remember(database: currentSchema)
+    }
+
+    /// Says so in Action Output when the query session had to reconnect.
+    private func noteReconnect() async {
+        guard let querySession, await querySession.takeReconnectNotice() else { return }
+        appendLog(
+            action: "Reconnect",
+            response: "The server had closed the connection, so SQ Pro reconnected. Session variables and temporary tables were reset.",
+            status: .success
+        )
+    }
+
+    // MARK: Autocomplete
+
+    /// Loads the current schema in the background, so the first suggestions already have its columns.
+    private func preloadCompletion() {
+        guard let currentSchema else { return }
+        loadCompletionSchemas([currentSchema]) {}
+    }
+
+    /// The caller has already put `name` in `completionLoading`.
+    private func loadCompletionSchema(_ name: String) async {
+        defer { completionLoading.remove(name) }
+        guard let metaSession else { return }
+        let schema = SQL.quoteString(name)
+        do {
+            let views = try await metaSession.execute(
+                "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(schema) AND TABLE_TYPE = 'VIEW'"
+            ).rows.compactMap { $0.first ?? nil }
+            let columns = try await metaSession.execute("""
+                SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = \(schema) ORDER BY TABLE_NAME, ORDINAL_POSITION
+                """)
+            let viewNames = Set(views)
+            var tables: [CompletionCatalog.Table] = []
+            for row in columns.rows {
+                let table = row[0] ?? ""
+                if tables.last?.name != table {
+                    tables.append(CompletionCatalog.Table(name: table, isView: viewNames.contains(table), columns: []))
+                }
+                tables[tables.count - 1].columns.append(CompletionCatalog.Column(name: row[1] ?? "", type: row[2] ?? ""))
+            }
+            completionTables[name] = tables
+        } catch {
+            // Remember the failure as "no tables", so typing doesn't retry on every key.
+            completionTables[name] = []
+        }
     }
 
     // MARK: Query tabs
@@ -212,6 +287,17 @@ final class ConnectionTab: Identifiable {
             selectedQueryID = queries[min(index, queries.count - 1)].id
         }
         return true
+    }
+
+    /// Opens a saved query in the current tab when that one is empty, otherwise in a new tab.
+    func openSavedQuery(_ query: SavedQuery) {
+        if let current = selectedQuery, current.tableInfo == nil, current.fileURL == nil, current.results.isEmpty,
+           current.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            current.title = query.name
+            current.text = query.sql
+        } else {
+            newQuery(text: query.sql, title: query.name)
+        }
     }
 
     /// Opens (or switches to) the info tab for a table: columns, indexes, foreign keys, triggers, DDL.
@@ -393,16 +479,25 @@ final class ConnectionTab: Identifiable {
         for statement in statements {
             let (sql, limited) = applyLimit ? SQL.applyingLimit(rowLimit, to: statement) : (statement, false)
             let entry = appendLog(action: Self.oneLine(sql), response: "Running…", status: .running)
+            let schema = currentSchema
             do {
                 let result = try await querySession.execute(sql)
+                await noteReconnect()
+                // So later statements in this run are filed under the new schema in History.
+                if let schema = SQL.useTarget(statement) { currentSchema = schema }
                 var response = result.summary
                 if limited, result.rows.count == rowLimit { response += " (limited)" }
                 updateLog(entry, response: response, status: .success, duration: result.duration)
+                // Queries typed in the editor go to History; clicks in the sidebar (USE …) don't.
+                if document != nil { recordHistory(statement, schema: schema, succeeded: true, response: response, duration: result.duration) }
                 if result.hasResultSet, let document {
                     newResults.append(ResultTab(title: document.nextResultTitle(for: result), result: result, appliedLimit: limited ? rowLimit : nil))
                 }
             } catch {
-                updateLog(entry, response: ErrorText.message(for: error), status: .error, duration: nil)
+                await noteReconnect()
+                let message = ErrorText.message(for: error)
+                updateLog(entry, response: message, status: .error, duration: nil)
+                if document != nil { recordHistory(statement, schema: schema, succeeded: false, response: message, duration: nil) }
                 break
             }
         }
@@ -415,6 +510,7 @@ final class ConnectionTab: Identifiable {
         if statements.contains(where: Self.changesSchemaList) {
             try? await reloadSchemas()
         }
+        preloadCompletion()
     }
 
     // MARK: Editing results
@@ -475,8 +571,11 @@ final class ConnectionTab: Identifiable {
                 do {
                     let result = try await querySession.execute(statement)
                     updateLog(entry, response: result.summary, status: .success, duration: result.duration)
+                    recordHistory(statement, schema: currentSchema, succeeded: true, response: result.summary, duration: result.duration)
                 } catch {
-                    updateLog(entry, response: ErrorText.message(for: error), status: .error, duration: nil)
+                    let message = ErrorText.message(for: error)
+                    updateLog(entry, response: message, status: .error, duration: nil)
+                    recordHistory(statement, schema: currentSchema, succeeded: false, response: message, duration: nil)
                     throw error
                 }
             }
@@ -510,6 +609,124 @@ final class ConnectionTab: Identifiable {
     private static func oneLine(_ sql: String) -> String {
         sql.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
     }
+
+    // MARK: History
+
+    /// Shows the History panel, or goes back to Action Output if it's already showing.
+    func toggleHistory() {
+        bottomPanel = bottomPanel == .history ? .output : .history
+    }
+
+    func loadHistory() {
+        guard !historyLoaded else { return }
+        historyLoaded = true
+        do {
+            history = try historyStore.load().reversed()
+        } catch {
+            appendLog(action: "Load history", response: error.localizedDescription, status: .error)
+        }
+    }
+
+    /// Appends to the file straight away, so history survives a crash.
+    func recordHistory(_ sql: String, schema: String?, succeeded: Bool, response: String, duration: Duration?) {
+        let seconds = duration.map { Double($0.components.seconds) + Double($0.components.attoseconds) / 1e18 }
+        let entry = HistoryEntry(
+            sql: QueryHistoryStore.redacted(sql), schema: schema, succeeded: succeeded, response: response, duration: seconds
+        )
+        try? historyStore.append([entry])
+        guard historyLoaded else { return }
+        history.insert(entry, at: 0)
+        if history.count > QueryHistoryStore.limit { history.removeLast(history.count - QueryHistoryStore.limit) }
+    }
+
+    func deleteHistory(_ ids: Set<HistoryEntry.ID>) {
+        history.removeAll { ids.contains($0.id) }
+        try? historyStore.save(history.reversed())
+    }
+
+    func clearHistory() {
+        history.removeAll()
+        try? historyStore.clear()
+    }
+
+    // MARK: CSV import
+
+    /// Picks a CSV file and opens the import sheet for the table.
+    func importCSV(into table: TableNode, in schema: SchemaNode) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText]
+        panel.message = "Choose a CSV file to import into \(schema.name).\(table.name)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await openImport(of: url, into: table, in: schema) }
+    }
+
+    func openImport(of url: URL, into table: TableNode, in schema: SchemaNode) async {
+        do {
+            await loadColumns(of: table, in: schema)
+            guard let columns = table.columns, !columns.isEmpty else { return }
+            let text = try await Task.detached { try CSV.read(url) }.value
+            importJob = await CSVImportJob.make(schema: schema.name, table: table.name, columns: columns, fileURL: url, text: text)
+        } catch {
+            appendLog(action: "Import \(url.lastPathComponent)", response: error.localizedDescription, status: .error)
+        }
+    }
+
+    /// Runs the import on its own connection, in one transaction, so the editor stays usable meanwhile.
+    func runImport(_ job: CSVImportJob) async {
+        let plan = job.plan
+        let rows = job.dataRows
+        job.phase = .running(done: 0, total: rows.count)
+        let session = MySQLSession(profile: profile, password: password)
+        let action = appendLog(action: "Import \(job.fileURL.lastPathComponent) into \(job.schema).\(job.table)", response: "Running…", status: .running)
+        let clock = ContinuousClock()
+        let start = clock.now
+        var current = 0
+        do {
+            try await session.connect()
+            let mode = try await session.execute("SELECT @@SESSION.sql_mode").rows.first?.first ?? nil
+            var finalPlan = plan
+            finalPlan.backslashEscapes = !(mode ?? "").contains("NO_BACKSLASH_ESCAPES")
+            let statements = await Task.detached { finalPlan.statements(for: rows) }.value
+            _ = try await session.execute("START TRANSACTION")
+            var affected: UInt64 = 0
+            for (index, statement) in statements.enumerated() {
+                if job.isCancelled { throw CancellationError() }
+                current = statement.firstRow
+                affected += try await session.execute(statement.sql).affectedRows
+                let done = index + 1 < statements.count ? statements[index + 1].firstRow : rows.count
+                job.phase = .running(done: done, total: rows.count)
+            }
+            if job.isCancelled { throw CancellationError() }
+            _ = try await session.execute("COMMIT")
+            let summary = plan.duplicates == .replace
+                ? "\(rows.count) row(s) imported (\(affected) affected, replaced rows count twice)"
+                : "\(affected) row(s) imported" + (affected < rows.count ? ", \(rows.count - Int(affected)) skipped as duplicates" : "")
+            updateLog(action, response: summary, status: .success, duration: clock.now - start)
+            recordHistory("-- Imported \(job.fileURL.lastPathComponent) into \(SQL.quoteIdentifier(job.schema)).\(SQL.quoteIdentifier(job.table))",
+                          schema: currentSchema, succeeded: true, response: summary, duration: clock.now - start)
+            job.phase = .finished(summary)
+        } catch {
+            _ = try? await session.execute("ROLLBACK")
+            let message = error is CancellationError
+                ? "Cancelled. Nothing was imported."
+                : "\(ErrorText.message(for: error))\nIn the batch starting at data row \(current + 1) (file line \(current + (job.hasHeader ? 2 : 1))). Nothing was imported."
+            updateLog(action, response: message.replacingOccurrences(of: "\n", with: " "), status: .error, duration: nil)
+            job.phase = .failed(message)
+        }
+        await session.close()
+    }
+
+    #if DEBUG
+    /// Kills the query session's connection from the server side, like an idle timeout would.
+    func debugDropQueryConnection() async {
+        guard let id = await querySession?.connectionID else { return }
+        let killer = MySQLSession(profile: profile, password: password)
+        try? await killer.connect()
+        _ = try? await killer.execute("KILL \(id)")
+        await killer.close()
+        try? await Task.sleep(for: .milliseconds(300))
+    }
+    #endif
 
     // MARK: Action log
 
@@ -666,4 +883,26 @@ struct ActionLogEntry: Identifiable {
     var response: String
     var status: Status
     var duration: Duration?
+}
+
+extension ConnectionTab: CompletionSource {
+    func completionCatalog() -> CompletionCatalog {
+        CompletionCatalog(schemas: schemas.map(\.name), currentSchema: currentSchema, tables: completionTables)
+    }
+
+    func loadCompletionSchemas(_ schemas: [String], done: @escaping () -> Void) {
+        let wanted = schemas.filter { completionTables[$0] == nil }
+        guard !wanted.isEmpty else { return }
+        completionWaiters.append(done)
+        let missing = wanted.filter { !completionLoading.contains($0) }
+        completionLoading.formUnion(missing)
+        guard !missing.isEmpty else { return }
+        Task {
+            for schema in missing { await loadCompletionSchema(schema) }
+            guard completionLoading.isEmpty else { return }
+            let waiters = completionWaiters
+            completionWaiters = []
+            waiters.forEach { $0() }
+        }
+    }
 }

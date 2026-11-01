@@ -29,7 +29,7 @@ struct QueryArea: View {
                         toolbar
                         Divider()
                         if let document = tab.selectedQuery {
-                            SQLEditor(document: document)
+                            SQLEditor(document: document, completionSource: tab)
                                 .id(document.id)
                         }
                     }
@@ -46,7 +46,7 @@ struct QueryArea: View {
 
     /// Hidden until there is something to show, or the AI Activity panel was asked for.
     private var showsBottomPanel: Bool {
-        !tab.log.isEmpty || tab.bottomPanel == .aiActivity || !mcp.activity(for: tab.profile.id).isEmpty
+        !tab.log.isEmpty || tab.bottomPanel != .output || !mcp.activity(for: tab.profile.id).isEmpty
     }
 
     // MARK: Toolbar
@@ -55,6 +55,9 @@ struct QueryArea: View {
         HStack(spacing: 2) {
             ToolbarButton("Open SQL File (⌘O)", icon: "folder") { QueryFiles.open(into: tab) }
             ToolbarButton("Save Query (⌘S)", icon: "square.and.arrow.down") { QueryFiles.save(tab.selectedQuery) }
+            ToolbarButton("Saved Queries (⌥⌘O)", icon: "bookmark") { tab.showsSavedQueries.toggle() }
+                .popover(isPresented: $tab.showsSavedQueries, arrowEdge: .bottom) { SavedQueriesPopover(tab: tab) }
+            ToolbarButton("Query History (⌘Y)", icon: "clock.arrow.circlepath") { tab.toggleHistory() }
             separator
             ToolbarButton("Execute all, or the selection (⇧⌘↩)", icon: "bolt.fill", tint: .yellow) { tab.run(.all) }
                 .disabled(tab.isRunning)

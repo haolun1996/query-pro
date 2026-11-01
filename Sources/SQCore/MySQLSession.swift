@@ -5,15 +5,28 @@ import NIOSSL
 
 public enum SessionError: Error, LocalizedError {
     case notConnected
+    /// The connection dropped while a statement was running. SQ Pro reconnected, but can't know whether it ran.
+    case lostDuringStatement
+    /// The connection dropped inside a transaction; the server rolled the transaction back.
+    case lostTransaction
 
     public var errorDescription: String? {
         switch self {
-        case .notConnected: "Not connected to the server."
+        case .notConnected:
+            "Not connected to the server."
+        case .lostDuringStatement:
+            "The connection to the server was lost while this statement was running. SQ Pro has reconnected; check whether the statement took effect before running it again."
+        case .lostTransaction:
+            "The connection to the server was lost during an open transaction, so the server rolled it back. SQ Pro has reconnected; nothing since START TRANSACTION was saved."
         }
     }
 }
 
 /// One live connection to a MySQL server. Statements run one at a time, in order.
+///
+/// Reconnects by itself when the server has dropped the connection (idle timeout, sleep, network change):
+/// after a quiet spell it checks the connection before using it, and a read-only statement that fails on a
+/// dropped connection is retried once. Anything else is never re-run blindly.
 public actor MySQLSession {
     public let profile: ConnectionProfile
     private var connection: MySQLConnection?
@@ -21,15 +34,24 @@ public actor MySQLSession {
     public private(set) var connectionID: UInt64?
     private let password: String?
 
+    /// Used again on reconnect, so `USE` survives a dropped connection.
+    private var database: String
+    /// From the last OK packet: the server reported an open transaction.
+    private var inTransaction = false
+    private var lastUsed = ContinuousClock.now
+    private var reconnected = false
+    /// After this long without a statement, check the connection is still alive before using it.
+    private static let idleCheck = Duration.seconds(30)
+
     public init(profile: ConnectionProfile, password: String?) {
         self.profile = profile
         self.password = password
+        self.database = profile.defaultSchema
     }
 
     public func connect() async throws {
         if let connection, !connection.isClosed { return }
-        connection = try await Self.open(profile: profile, password: password, database: profile.defaultSchema)
-        connectionID = try await execute("SELECT CONNECTION_ID()").rows.first?.first.flatMap { $0.flatMap(UInt64.init) }
+        try await open()
     }
 
     public func close() async {
@@ -37,13 +59,110 @@ public actor MySQLSession {
         connection = nil
     }
 
+    /// The schema to return to after a reconnect.
+    public func remember(database: String?) {
+        self.database = database ?? ""
+    }
+
+    /// `true` once after the session had to reconnect, so the app can say so.
+    public func takeReconnectNotice() -> Bool {
+        defer { reconnected = false }
+        return reconnected
+    }
+
     public func execute(_ sql: String) async throws -> QueryResult {
+        guard connection != nil else { throw SessionError.notConnected }
+        try await reviveIfNeeded()
+        do {
+            return try await run(sql)
+        } catch where Self.isConnectionLost(error) {
+            let hadTransaction = inTransaction
+            try await reconnect()
+            if hadTransaction { throw SessionError.lostTransaction }
+            guard SQL.isReadOnly(sql) else { throw SessionError.lostDuringStatement }
+            return try await run(sql)
+        }
+    }
+
+    // MARK: Connection health
+
+    private func open() async throws {
+        connection = try await Self.open(profile: profile, password: password, database: database)
+        inTransaction = false
+        lastUsed = .now
+        connectionID = try await run("SELECT CONNECTION_ID()").rows.first?.first.flatMap { $0.flatMap(UInt64.init) }
+    }
+
+    private func reconnect() async throws {
+        if let connection { _ = connection.close() }
+        connection = nil
+        do {
+            try await open()
+        } catch where !database.isEmpty {
+            // The schema may have been dropped meanwhile; connect without it.
+            database = ""
+            try await open()
+        }
+        reconnected = true
+    }
+
+    /// Reconnects when the connection is closed, or after a quiet spell doesn't answer a ping within 5 seconds.
+    /// A connection left open in a transaction is reported instead of silently replaced.
+    private func reviveIfNeeded() async throws {
+        guard let connection else { return }
+        var alive = !connection.isClosed
+        if alive, ContinuousClock.now - lastUsed > Self.idleCheck {
+            alive = await Self.ping(connection)
+        }
+        guard !alive else { return }
+        let hadTransaction = inTransaction
+        try await reconnect()
+        if hadTransaction { throw SessionError.lostTransaction }
+    }
+
+    private static func ping(_ connection: MySQLConnection) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask { (try? await connection.simpleQuery("SELECT 1").get()) != nil }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(5))
+                // Closing fails the stuck ping, so the group can finish.
+                connection.channel.close(promise: nil)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Errors meaning the connection is gone, as opposed to the statement failing.
+    static func isConnectionLost(_ error: any Error) -> Bool {
+        switch error {
+        case MySQLError.closed, is ChannelError, is IOError, SessionError.notConnected:
+            return true
+        case MySQLError.server(let packet):
+            // 4031: disconnected for inactivity (MySQL 8.0.24+). 2006 / 2013: server gone away / lost connection.
+            return [4031, 2006, 2013].contains(packet.errorCode.rawValue)
+        case let error as NIOSSLError:
+            if case .uncleanShutdown = error { return true }
+            return false
+        default:
+            return false
+        }
+    }
+
+    private func run(_ sql: String) async throws -> QueryResult {
         guard let connection, !connection.isClosed else { throw SessionError.notConnected }
         let command = TextQueryCommand(sql: sql)
         let clock = ContinuousClock()
         let start = clock.now
+        defer { lastUsed = .now }
         try await connection.send(command, logger: connection.logger).get()
         let duration = clock.now - start
+        if let ok = command.ok {
+            inTransaction = ok.statusFlags.contains(.SERVER_STATUS_IN_TRANS)
+            if let schema = SQL.useTarget(sql) { database = schema }
+        }
 
         let columns = command.columns.map { definition in
             ColumnInfo(

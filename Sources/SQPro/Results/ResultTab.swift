@@ -187,6 +187,42 @@ final class ResultTab: Identifiable {
         )
     }
 
+    // MARK: Export
+
+    /// The INSERT target: the edited table, else the one table the columns come from, else a placeholder to rename.
+    var exportTable: String {
+        if let target = editTarget { return "\(SQL.quoteIdentifier(target.schema)).\(SQL.quoteIdentifier(target.table))" }
+        let sources = Set(result.columns.filter { !$0.table.isEmpty }.map { [$0.schema, $0.table] })
+        if sources.count == 1, let source = sources.first {
+            return source[0].isEmpty ? SQL.quoteIdentifier(source[1]) : "\(SQL.quoteIdentifier(source[0])).\(SQL.quoteIdentifier(source[1]))"
+        }
+        return "`table_name`"
+    }
+
+    /// A file name without extension, e.g. `admins` for "admins 2".
+    var exportFileName: String {
+        let sources = Set(result.columns.map(\.table).filter { !$0.isEmpty })
+        return sources.count == 1 ? sources.first! : title
+    }
+
+    /// The rows as loaded, in the grid's filter and sort; unsaved edits aren't part of the file.
+    func export(_ format: ResultExport.Format) -> String {
+        let rows = visibleRows.filter { $0 < result.rows.count }.map { result.rows[$0] }
+        return export(format, rows: rows)
+    }
+
+    /// Selected grid rows as shown, edits included, like Copy Row.
+    func export(_ format: ResultExport.Format, visibleRows rows: IndexSet) -> String {
+        let values = rows.filter { $0 < visibleRows.count }.map { row in
+            result.columns.indices.map { value(atVisibleRow: row, column: $0) }
+        }
+        return export(format, rows: values)
+    }
+
+    private func export(_ format: ResultExport.Format, rows: [[String?]]) -> String {
+        ResultExport.export(format, columns: result.columns, rows: rows, table: exportTable, backslashEscapes: editTarget?.backslashEscapes ?? true)
+    }
+
     // MARK: Viewing
 
     func sort(by column: Int?, ascending: Bool) {

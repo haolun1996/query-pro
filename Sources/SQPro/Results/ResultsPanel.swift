@@ -56,6 +56,7 @@ struct ResultsPanel: View {
                 .font(.callout)
                 .foregroundStyle(result.isLimited ? .orange : .secondary)
                 .help(result.isLimited ? "The row limit was reached. Choose a higher limit to see more." : "")
+            ExportMenu(result: result)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -131,6 +132,33 @@ private struct FilterRowsField: View {
         .padding(.vertical, 3)
         .frame(width: 220)
         .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 6))
+    }
+}
+
+/// Saves or copies the whole result (filter and sort applied) as CSV, JSON or INSERT statements.
+private struct ExportMenu: View {
+    let result: ResultTab
+
+    var body: some View {
+        Menu {
+            Section("Export to File") {
+                ForEach(ResultExport.Format.allCases, id: \.self) { format in
+                    Button("\(format.title)…") { ResultFiles.export(result, as: format) }
+                }
+            }
+            Section("Copy") {
+                ForEach(ResultExport.Format.allCases, id: \.self) { format in
+                    Button("Copy as \(format.title)") { ResultFiles.copy(result.export(format)) }
+                }
+            }
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(result.result.columns.isEmpty)
+        .help("Export or copy the rows shown, as CSV, JSON or SQL INSERT")
     }
 }
 

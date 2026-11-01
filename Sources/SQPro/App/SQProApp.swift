@@ -4,6 +4,7 @@ import SwiftUI
 struct SQProApp: App {
     @State private var connections: ConnectionsModel
     @State private var workspace = Workspace()
+    @State private var savedQueries = SavedQueriesModel()
     @State private var mcp: MCPController
 
     init() {
@@ -18,6 +19,7 @@ struct SQProApp: App {
                 .environment(connections)
                 .environment(workspace)
                 .environment(mcp)
+                .environment(savedQueries)
                 .frame(minWidth: 900, minHeight: 520)
                 #if DEBUG
                 .task { await DebugSnapshot.run(workspace: workspace, connections: connections) }

@@ -235,6 +235,20 @@ public enum SQL {
         return output
     }
 
+    /// The schema of a `USE schema` statement, unquoted.
+    public static func useTarget(_ sql: String) -> String? {
+        let utf16 = Array(sql.utf16)
+        let code = tokenize(sql).filter { $0.kind != .whitespace && $0.kind != .comment && $0.kind != .semicolon }
+        guard code.count == 2 else { return nil }
+        func text(_ token: SQLToken) -> String {
+            String(utf16CodeUnits: Array(utf16[token.range]), count: token.range.count)
+        }
+        guard text(code[0]).uppercased() == "USE" else { return nil }
+        let name = text(code[1])
+        guard name.hasPrefix("`") else { return code[1].kind == .identifier || code[1].kind == .keyword ? name : nil }
+        return String(name.dropFirst().dropLast()).replacingOccurrences(of: "``", with: "`")
+    }
+
     // MARK: Quoting
 
     /// `` `name` `` with backticks doubled.

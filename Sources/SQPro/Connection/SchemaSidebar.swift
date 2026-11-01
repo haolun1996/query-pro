@@ -103,6 +103,9 @@ struct SchemaSidebar: View {
                     tab.openTableInfo(tableNode, in: schemaNode)
                 }
             }
+            if let schemaNode = tab.schemaNode(schema), let tableNode = tab.tableNode(schema, table), !tableNode.isView {
+                Button("Import CSV…") { tab.importCSV(into: tableNode, in: schemaNode) }
+            }
         case .routine:
             EmptyView()
         }

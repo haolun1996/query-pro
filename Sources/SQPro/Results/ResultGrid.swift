@@ -258,6 +258,13 @@ struct ResultGrid: NSViewRepresentable {
             menu.addItem(withTitle: "Copy Field", action: #selector(copyField), keyEquivalent: "").target = self
             menu.addItem(withTitle: "Copy Row", action: #selector(copyRows), keyEquivalent: "").target = self
             menu.addItem(withTitle: "Copy Rows with Column Names", action: #selector(copyRowsWithHeader), keyEquivalent: "").target = self
+            let copyAs = NSMenu()
+            for format in ResultExport.Format.allCases {
+                let item = copyAs.addItem(withTitle: format.title, action: #selector(copyRowsAs), keyEquivalent: "")
+                item.target = self
+                item.representedObject = format.rawValue
+            }
+            menu.addItem(withTitle: "Copy Rows As", action: nil, keyEquivalent: "").submenu = copyAs
             menu.addItem(.separator())
             menu.addItem(withTitle: "Copy Column Name", action: #selector(copyColumnName), keyEquivalent: "").target = self
             return menu
@@ -326,6 +333,11 @@ struct ResultGrid: NSViewRepresentable {
 
         @objc func copyRowsWithHeader() {
             write(text(for: targetRows, header: true))
+        }
+
+        @objc func copyRowsAs(_ item: NSMenuItem) {
+            guard let format = (item.representedObject as? String).flatMap(ResultExport.Format.init(rawValue:)) else { return }
+            write(resultTab.export(format, visibleRows: targetRows))
         }
 
         @objc func copyColumnName() {

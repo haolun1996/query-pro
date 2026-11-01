@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// The bottom of a connection tab: Action Output (statements you ran) or AI Activity (what Claude ran here).
+/// The bottom of a connection tab: Action Output (this session), History (every query run on this connection)
+/// or AI Activity (what Claude ran here).
 struct BottomPanelView: View {
     @Bindable var tab: ConnectionTab
     @Environment(MCPController.self) private var mcp
+    @State private var historySearch = ""
+    @State private var confirmClearHistory = false
 
     var body: some View {
         let aiEntries = mcp.activity(for: tab.profile.id)
@@ -11,6 +14,7 @@ struct BottomPanelView: View {
             HStack {
                 Picker("Panel", selection: $tab.bottomPanel) {
                     Text("Action Output").tag(ConnectionTab.BottomPanel.output)
+                    Text("History").tag(ConnectionTab.BottomPanel.history)
                     Text(aiEntries.isEmpty ? "AI Activity" : "AI Activity (\(aiEntries.count))").tag(ConnectionTab.BottomPanel.aiActivity)
                 }
                 .pickerStyle(.segmented)
@@ -25,6 +29,14 @@ struct BottomPanelView: View {
                         .controlSize(.small)
                         .disabled(tab.log.isEmpty)
                         .help("Clear the output")
+                } else if tab.bottomPanel == .history {
+                    HistorySearchField(text: $historySearch)
+                    Button("Clear History", systemImage: "trash") { confirmClearHistory = true }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .disabled(tab.history.isEmpty)
+                        .help("Delete this connection's whole history")
                 }
             }
             .padding(.horizontal, 10)
@@ -32,8 +44,14 @@ struct BottomPanelView: View {
 
             switch tab.bottomPanel {
             case .output: ActionOutputView(tab: tab)
+            case .history: HistoryView(tab: tab, search: historySearch)
             case .aiActivity: MCPActivityTable(entries: aiEntries, showsConnection: false)
             }
+        }
+        .confirmationDialog("Delete the query history of \(tab.profile.name)?", isPresented: $confirmClearHistory) {
+            Button("Delete History", role: .destructive) { tab.clearHistory() }
+        } message: {
+            Text("Saved queries are kept.")
         }
     }
 }

@@ -99,6 +99,100 @@ final class SQLTextView: NSTextView {
         band.intersection(rect).fill()
     }
 
+    // MARK: Autocomplete
+
+    /// Set for the query editor only; read-only views and the Apply dialog don't complete.
+    var completionSource: CompletionSource? {
+        didSet {
+            if completionSource != nil, completion == nil { completion = CompletionController(textView: self) }
+            completion?.source = completionSource
+        }
+    }
+    private var completion: CompletionController?
+
+    #if DEBUG
+    var debugCompletionNames: [String] { completion?.debugNames ?? [] }
+    #endif
+    /// Selection changes made by typing keep the list open; clicks and arrow keys close it.
+    private var isChangingText = false
+
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        isChangingText = true
+        super.insertText(string, replacementRange: replacementRange)
+        isChangingText = false
+        guard let completion else { return }
+        let text = (string as? String) ?? (string as? NSAttributedString)?.string ?? ""
+        // One typed letter, digit, `.` or backtick updates the list; anything else (space, paste, IME commit) closes it.
+        if text.count == 1, let scalar = text.unicodeScalars.first,
+           scalar == "." || scalar == "`" || scalar == "_" || scalar == "$" || CharacterSet.alphanumerics.contains(scalar) {
+            completion.update()
+        } else {
+            completion.close()
+        }
+    }
+
+    override func deleteBackward(_ sender: Any?) {
+        isChangingText = true
+        super.deleteBackward(sender)
+        isChangingText = false
+        if completion?.isVisible == true { completion?.update() }
+    }
+
+    /// Esc and ⌥Esc open the list on demand.
+    override func complete(_ sender: Any?) {
+        guard let completion else { return super.complete(sender) }
+        if completion.isVisible { completion.close() } else { completion.update(manual: true) }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // ⌃Space, as in most editors (when the system doesn't use it for switching input sources).
+        if completion != nil, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control,
+           event.charactersIgnoringModifiers == " " {
+            completion?.update(manual: true)
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func doCommand(by selector: Selector) {
+        if let completion, completion.isVisible {
+            switch selector {
+            case #selector(moveUp(_:)): return completion.moveSelection(by: -1)
+            case #selector(moveDown(_:)): return completion.moveSelection(by: 1)
+            case #selector(scrollPageUp(_:)), #selector(pageUp(_:)): return completion.moveSelection(by: -9)
+            case #selector(scrollPageDown(_:)), #selector(pageDown(_:)): return completion.moveSelection(by: 9)
+            case #selector(insertNewline(_:)), #selector(insertTab(_:)):
+                if completion.accept() { return }
+            case #selector(cancelOperation(_:)): return completion.close()
+            case #selector(deleteBackward(_:)): break
+            default: completion.close()
+            }
+        }
+        super.doCommand(by: selector)
+    }
+
+    /// Called by the editor's delegate.
+    func selectionDidChange() {
+        if !isChangingText { completion?.close() }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        completion?.close()
+        return super.resignFirstResponder()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { completion?.close() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    /// One undoable change that doesn't reopen the list.
+    func insertCompletion(_ text: String, replacing range: NSRange) {
+        isChangingText = true
+        super.insertText(text, replacementRange: range)
+        isChangingText = false
+    }
+
     // MARK: Editing helpers
 
     /// Replaces the whole text as one undoable change.

@@ -75,6 +75,7 @@ final class ConnectionsModel {
 
     func delete(_ profile: ConnectionProfile) {
         profiles.removeAll { $0.id == profile.id }
+        try? QueryHistoryStore(connectionID: profile.id).clear()
         Task {
             await Keychain.deletePassword(for: profile.id)
             await Keychain.deletePassword(for: profile.id, kind: .mcp)
