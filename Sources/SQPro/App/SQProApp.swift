@@ -6,6 +6,7 @@ struct SQProApp: App {
     @State private var workspace = Workspace()
     @State private var savedQueries = SavedQueriesModel()
     @State private var mcp: MCPController
+    @State private var localServer = LocalServerController()
 
     init() {
         let connections = ConnectionsModel()
@@ -20,6 +21,7 @@ struct SQProApp: App {
                 .environment(workspace)
                 .environment(mcp)
                 .environment(savedQueries)
+                .environment(localServer)
                 .frame(minWidth: 900, minHeight: 520)
                 #if DEBUG
                 .task { await DebugSnapshot.run(workspace: workspace, connections: connections) }

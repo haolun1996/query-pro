@@ -71,6 +71,7 @@ struct HomeView: View {
                 .buttonStyle(.borderless)
                 .help("New connection")
             Spacer()
+            LocalServerButton()
             FilterField(text: Bindable(workspace).homeFilter)
         }
     }

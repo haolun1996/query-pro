@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Build the SQPro executable and assemble an ad-hoc-signed dist/Query Pro.app around it.
+# Build the SQPro executable and assemble a signed dist/Query Pro.app around it (ad-hoc unless --sign).
 #
-#   scripts/bundle.sh            # release build
-#   scripts/bundle.sh --debug    # debug build
-#   scripts/bundle.sh --open     # build, quit the running copy, launch the new one
+#   scripts/bundle.sh                  # release build
+#   scripts/bundle.sh --debug          # debug build
+#   scripts/bundle.sh --open           # build, quit the running copy, launch the new one
+#   scripts/bundle.sh --sign NAME      # sign with a Keychain identity (name, prefix or SHA-1), e.g. "Apple Development: haolun"
 set -euo pipefail
 
 config=release
 open_after=false
-for arg in "$@"; do
+identity=-
+while (($#)); do
+  arg="$1"
+  shift
   case "$arg" in
+    --sign)
+      identity="${1:?--sign needs an identity}"
+      shift
+      ;;
     --debug) config=debug ;;
     --release) config=release ;;
     --open) open_after=true ;;
     -h | --help)
-      sed -n '2,6p' "$0"
+      sed -n '2,7p' "$0"
       exit 0
       ;;
     *)
@@ -48,7 +56,7 @@ for bundle in "$bin"/*.bundle; do
 done
 shopt -u nullglob
 
-codesign --force --deep --sign - "$app"
+codesign --force --deep --sign "$identity" "$app"
 codesign --verify --strict "$app"
 
 echo "Built $root/$app ($config)"

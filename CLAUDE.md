@@ -7,11 +7,12 @@ Native macOS MySQL client (macOS 26+, Liquid Glass). Workbench-style layout, onl
 
 ```
 scripts/bundle.sh --debug --open   # build dist/Query Pro.app, quit the running copy, launch it
+scripts/bundle.sh --sign "Apple Development: haolun"   # release build signed with the personal identity
 swift test                         # SQCore + SQMCP tests (SQL parsing, autocomplete, export, Keychain, MCP tools)
 .build/debug/sqcheck localhost 3306 root "" "select 1"   # CLI connection check; password from SQ_PASSWORD
 ```
 
-Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh`.
+Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh` unless `--sign` names a Keychain identity.
 `swift scripts/make-icon.swift` rebuilds `Resources/AppIcon.icns` from `Resources/AppIcon-source.png` (agy-generated).
 
 The app was renamed from "SQ Pro" to "Querywell" and then to **Query Pro**, but only the visible name changed. Module/target names (`SQPro`),
@@ -77,6 +78,10 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
 - **CSV import** runs on a fresh `MySQLSession` (the tab keeps its password in memory for this), never the query
   session, so the editor stays usable. `CSV.parse` returns `nil` for unquoted empty / `\N` fields so NULL and ''
   survive a round trip with `ResultExport.csv`.
+- **Local server** (`LocalMySQLServer`, SQCore): status is a TCP connect to 127.0.0.1:3306, then `launchctl print`
+  (no root). Start/Stop run `launchctl kickstart` / `kill TERM` on Oracle's system LaunchDaemon through
+  `osascript … with administrator privileges`; never sudo. `LocalServerController` is shared by the home header
+  button and the "Can't connect" view.
 - `sqcheck` prompts for a password on a TTY-less stdin unless `SQ_PASSWORD` is set: use `SQ_PASSWORD="" … </dev/null`.
 - MySQL 8 reserves words like `empty`; a 1064 error from a test query may be the query, not the app.
 - Non-root users don't see `information_schema`, `performance_schema`, `mysql`, `sys` in the sidebar.

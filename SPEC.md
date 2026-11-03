@@ -113,6 +113,10 @@ One level only. A group exists while at least one connection is in it.
   text NULL → NULL, duplicates stop / skip (INSERT IGNORE) / replace (REPLACE). Runs on its own connection in one
   transaction with batched INSERTs, progress and Stop; any error rolls everything back and names the batch's line.
   Reads UTF-8 (BOM ok) or Windows-1252. Query Pro's own CSV export imports back losslessly (NULL vs '').
+- **Local MySQL server**: home header shows the MySQL installed by Oracle's macOS installer (LaunchDaemon
+  `com.oracle.oss.mysql.mysqld`) as Running / Stopped with Start / Stop; "Can't connect" to localhost:3306 offers
+  Start MySQL Server, then reconnects. Starting and stopping ask for an administrator password (macOS prompt).
+  Hidden when that install isn't there.
 
 ## Build order
 1. ✅ Driver check (`sqcheck`)
@@ -122,4 +126,4 @@ One level only. A group exists while at least one connection is in it.
 5. ✅ Editing, Apply/Revert, confirm dialog
 6. ✅ MCP server
 7. ✅ Phase 2
-8. ✅ Phase 3: reconnect, query history, CSV import
+8. ✅ Phase 3: reconnect, query history, CSV import, local server start/stop

@@ -4,6 +4,7 @@ import SQCore
 /// The content of one connection tab: schema tree on the left, query editor on the right.
 struct ConnectionTabView: View {
     @Bindable var tab: ConnectionTab
+    @Environment(LocalServerController.self) private var localServer
 
     @State private var typedPassword = ""
     @State private var rememberPassword = true
@@ -25,9 +26,22 @@ struct ConnectionTabView: View {
                     Label("Can't connect", systemImage: "bolt.horizontal.circle")
                 } description: {
                     Text(message).textSelection(.enabled)
+                    if offersLocalServerStart, let error = localServer.lastError {
+                        Text(error).foregroundStyle(.orange).textSelection(.enabled)
+                    }
                 } actions: {
-                    Button("Try Again") { Task { await tab.connect() } }
+                    HStack {
+                        if offersLocalServerStart {
+                            Button("Start MySQL Server") {
+                                Task { if await localServer.start() { await tab.connect() } }
+                            }
+                            .buttonStyle(.glassProminent)
+                            .disabled(localServer.isBusy)
+                        }
+                        Button("Try Again") { Task { await tab.connect() } }
+                    }
                 }
+                .task { await localServer.refresh() }
             }
         }
         .sheet(isPresented: $tab.needsPassword) { passwordSheet }
@@ -36,6 +50,12 @@ struct ConnectionTabView: View {
                 // Closing mid-import would hide the progress; Stop first.
                 .interactiveDismissDisabled(isImporting(job))
         }
+    }
+
+    /// Only for localhost on the default port, the one Oracle's installer sets up.
+    private var offersLocalServerStart: Bool {
+        LocalMySQLServer.isLocal(host: tab.profile.host) && tab.profile.port == 3306
+            && (localServer.status == .stopped || localServer.isBusy)
     }
 
     private func isImporting(_ job: CSVImportJob) -> Bool {
