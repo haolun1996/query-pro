@@ -15,7 +15,23 @@ final class ConnectionsModel {
             profiles = try store.load()
         } catch {
             lastError = "Couldn't read saved connections: \(error.localizedDescription)"
+            return
         }
+        addLocalInstanceOnce()
+    }
+
+    /// Like Workbench, offers "Local instance 3306" as root when MySQL is installed on this Mac. Only once, so a
+    /// deleted card stays deleted. It has no saved password: opening it asks for one.
+    private func addLocalInstanceOnce() {
+        let key = "addedLocalInstance"
+        guard LocalMySQLServer.isInstalled, !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        let hasLocalRoot = profiles.contains {
+            LocalMySQLServer.isLocal(host: $0.host) && $0.port == 3306 && $0.user == "root"
+        }
+        guard !hasLocalRoot else { return }
+        profiles.insert(ConnectionProfile(name: "Local instance 3306"), at: 0)
+        persist()
     }
 
     var groups: [String] {

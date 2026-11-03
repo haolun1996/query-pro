@@ -34,6 +34,7 @@ build and framework access would prompt again each time. Items created by `secur
 
 ## 1. Home screen
 - Glass cards: name, user, `host:port`. Tint from the connection colour; red = production.
+- When Oracle's MySQL is installed, a **Local instance 3306** card (root@localhost) is added once; deleting it is permanent.
 - Group folders (blue) show "N Connections". Inside a group, a red **< back** card comes first (Esc also goes back).
 - Search box filters across all groups.
 - Click a card to open the connection in its own window.
