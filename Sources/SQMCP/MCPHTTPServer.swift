@@ -86,7 +86,7 @@ public actor MCPHTTPServer {
         guard let path = request.path, path.hasPrefix(Self.pathPrefix),
               let connection = UUID(uuidString: String(path.dropFirst(Self.pathPrefix.count)))
         else {
-            return .error(statusCode: 404, .invalidRequest("Not Found: use the URL from Querywell, /mcp/<connection id>"))
+            return .error(statusCode: 404, .invalidRequest("Not Found: use the URL from Query Pro, /mcp/<connection id>"))
         }
         guard let expected = await token(connection), Self.matches(request.header("Authorization"), "Bearer \(expected)") else {
             return .error(statusCode: 401, .invalidRequest("Unauthorized: missing or wrong bearer token for this connection"))

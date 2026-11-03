@@ -169,7 +169,7 @@ enum DebugSnapshot {
     @MainActor
     private static func save(to url: URL) {
         let windows = NSApp.windows.filter { $0.isVisible && $0.contentView != nil }
-        guard let main = windows.first(where: { $0.title == "Querywell" }) ?? windows.first else { return }
+        guard let main = windows.first(where: { $0.title == "Query Pro" }) ?? windows.first else { return }
         write(main, to: url)
         for (index, window) in windows.filter({ $0 !== main }).enumerated() {
             let name = url.deletingPathExtension().lastPathComponent + "-\(index + 1)." + url.pathExtension

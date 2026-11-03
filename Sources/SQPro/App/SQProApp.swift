@@ -14,7 +14,7 @@ struct SQProApp: App {
     }
 
     var body: some Scene {
-        Window("Querywell", id: "main") {
+        Window("Query Pro", id: "main") {
             MainWindow()
                 .environment(connections)
                 .environment(workspace)

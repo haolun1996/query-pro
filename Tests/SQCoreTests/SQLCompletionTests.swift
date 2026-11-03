@@ -4,7 +4,7 @@ import Testing
 
 @Suite struct SQLCompletionTests {
     private let catalog = CompletionCatalog(
-        schemas: ["pos", "mysapu"],
+        schemas: ["pos", "shop"],
         currentSchema: "pos",
         tables: [
             "pos": [
@@ -54,7 +54,7 @@ import Testing
     }
 
     @Test func schemasAfterUse() {
-        #expect(complete("use my|").names == ["mysapu"])
+        #expect(complete("use sh|").names == ["shop"])
     }
 
     @Test func nothingInsideStringsCommentsOrNumbers() {
@@ -108,8 +108,8 @@ import Testing
     }
 
     @Test func schemasToLoad() throws {
-        let request = try #require(complete("select * from mysapu.|").request)
-        #expect(SQLCompletion.schemasToLoad(for: request, in: catalog) == ["mysapu"])
+        let request = try #require(complete("select * from shop.|").request)
+        #expect(SQLCompletion.schemasToLoad(for: request, in: catalog) == ["shop"])
     }
 }
 

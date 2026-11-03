@@ -5,7 +5,7 @@ public enum CSV {
     public static let delimiters: [Character] = [",", ";", "\t", "|"]
 
     /// Rows of fields. An unquoted empty field and an unquoted `\N` are `nil`; a quoted `""` is an empty string.
-    /// That matches Querywell's own CSV export, which writes NULL as nothing and an empty string as `""`.
+    /// That matches Query Pro's own CSV export, which writes NULL as nothing and an empty string as `""`.
     /// A leading BOM is skipped; blank lines are dropped.
     public static func parse(_ text: String, delimiter: Character = ",") -> [[String?]] {
         let bytes = Array(text.utf8)

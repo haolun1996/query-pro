@@ -49,10 +49,10 @@ public struct SQLTools: Sendable {
     /// A fresh `Server` with the tools registered, one per MCP session.
     public func makeServer(version: String) async -> Server {
         let server = Server(
-            name: "querywell",
+            name: "query-pro",
             version: version,
             instructions: """
-                Access to one MySQL connection the user saved in Querywell. Start with connection_info, then \
+                Access to one MySQL connection the user saved in Query Pro. Start with connection_info, then \
                 list_databases / list_tables / describe_table to learn the schema before querying. run_query is \
                 read-only; execute is for writes and only works if the user allowed writes for this connection.
                 """,
@@ -282,7 +282,7 @@ public struct SQLTools: Sendable {
             let sql = try required("sql", arguments)
             guard profile.mcpAccess == .readWrite else {
                 throw ToolError(
-                    "\(profile.name) is read-only for AI. The user can allow writes in Querywell: Edit Connection › AI access.",
+                    "\(profile.name) is read-only for AI. The user can allow writes in Query Pro: Edit Connection › AI access.",
                     isBlock: true
                 )
             }
@@ -310,7 +310,7 @@ public struct SQLTools: Sendable {
     /// The connection this server is for, as currently saved. Fails if it was deleted or hidden from AI.
     private func profile(_ arguments: [String: Value]) async throws -> ConnectionProfile {
         guard let profile = await provider.profiles().first(where: { $0.id == connectionID }), profile.mcpAccess != .hidden else {
-            throw ToolError("This connection is no longer available to AI clients in Querywell.", isBlock: true)
+            throw ToolError("This connection is no longer available to AI clients in Query Pro.", isBlock: true)
         }
         return profile
     }

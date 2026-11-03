@@ -225,7 +225,7 @@ final class ConnectionTab: Identifiable {
         guard let querySession, await querySession.takeReconnectNotice() else { return }
         appendLog(
             action: "Reconnect",
-            response: "The server had closed the connection, so Querywell reconnected. Session variables and temporary tables were reset.",
+            response: "The server had closed the connection, so Query Pro reconnected. Session variables and temporary tables were reset.",
             status: .success
         )
     }
@@ -783,7 +783,7 @@ final class QueryDocument: Identifiable {
         self.tableInfo = tableInfo
     }
 
-    /// "customer_points 1", "customer_points 2", … numbered per table, like Workbench's result tabs.
+    /// "wallets 1", "wallets 2", … numbered per table, like Workbench's result tabs.
     func nextResultTitle(for result: QueryResult) -> String {
         let tables = Set(result.columns.map(\.table).filter { !$0.isEmpty })
         let base = tables.count == 1 ? tables.first! : "Result"

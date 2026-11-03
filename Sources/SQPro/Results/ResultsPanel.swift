@@ -162,7 +162,7 @@ private struct ExportMenu: View {
     }
 }
 
-/// "customer_points 1  customer_points 2" under the results.
+/// "wallets 1  wallets 2" under the results.
 private struct ResultTabBar: View {
     let document: QueryDocument
 

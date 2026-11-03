@@ -1,6 +1,6 @@
 import Foundation
 
-/// A named query kept in Querywell, for one connection or for all of them.
+/// A named query kept in Query Pro, for one connection or for all of them.
 public struct SavedQuery: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID
     public var name: String

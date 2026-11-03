@@ -1,4 +1,4 @@
-# Querywell — spec
+# Query Pro — spec
 
 A native macOS MySQL client. Workbench-style layout, Liquid Glass look, only the features we use.
 
@@ -19,7 +19,7 @@ Sources/
   sqcheck/   CLI connection check: sqcheck <host> <port> <user> [schema] [sql]
 Tests/SQCoreTests/
 Resources/Info.plist
-scripts/bundle.sh   → dist/Querywell.app (ad-hoc signed)
+scripts/bundle.sh   → dist/Query Pro.app (ad-hoc signed)
 ```
 
 ```
@@ -65,7 +65,7 @@ One level only. A group exists while at least one connection is in it.
 ## 4. Results
 - Row limit dropdown: Don't Limit, 10, 50, 100, 200, 300, 400, 500, 1000, 2000, 5000, 10000, 50000. Default 1000, remembered per connection. Adds `LIMIT n` only when the query has none. Status shows "(limited)".
 - Result grid toolbar: Filter Rows, Edit (edit / add row / delete row), Export.
-- One result tab per result set (e.g. `customer_points 1`).
+- One result tab per result set (e.g. `wallets 1`).
 - NULL shown as a badge.
 - Right-side tabs: Result Grid, Form Editor, Field Types, Query Stats.
 - Action Output panel: status, time, SQL, response ("3 row(s) returned" / error), duration.
@@ -112,7 +112,7 @@ One level only. A group exists while at least one connection is in it.
   delimiter auto-detected, header row toggle, columns auto-mapped by name, per-column mapping or skip, empty → NULL,
   text NULL → NULL, duplicates stop / skip (INSERT IGNORE) / replace (REPLACE). Runs on its own connection in one
   transaction with batched INSERTs, progress and Stop; any error rolls everything back and names the batch's line.
-  Reads UTF-8 (BOM ok) or Windows-1252. Querywell's own CSV export imports back losslessly (NULL vs '').
+  Reads UTF-8 (BOM ok) or Windows-1252. Query Pro's own CSV export imports back losslessly (NULL vs '').
 
 ## Build order
 1. ✅ Driver check (`sqcheck`)

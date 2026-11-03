@@ -30,7 +30,7 @@ struct ConnectionEditorView: View {
         VStack(spacing: 0) {
             Form {
                 Section {
-                    TextField("Name", text: $profile.name, prompt: Text("e.g. Local My Sapu"))
+                    TextField("Name", text: $profile.name, prompt: Text("e.g. Local MySQL"))
                     groupField
                     Picker("Color", selection: $profile.color) {
                         ForEach(ConnectionColor.allCases, id: \.self) { color in

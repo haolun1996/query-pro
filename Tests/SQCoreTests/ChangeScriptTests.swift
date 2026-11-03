@@ -3,7 +3,7 @@ import Testing
 
 @Suite struct ChangeScriptTests {
     private func column(_ name: String, _ type: String = "VAR_STRING", original: String? = nil, binary: Bool = false) -> ColumnInfo {
-        ColumnInfo(name: name, schema: "mysapu", table: "customer_points", originalName: original ?? name,
+        ColumnInfo(name: name, schema: "shop", table: "wallets", originalName: original ?? name,
                    typeName: type, isPrimaryKey: false, isNotNull: false, isBinary: binary)
     }
 
@@ -18,31 +18,31 @@ import Testing
     ]
 
     private func script(_ edits: RowEdits) -> String {
-        ChangeScript.build(schema: "mysapu", table: "customer_points", primaryKey: [0], columns: columns, rows: rows, edits: edits)
+        ChangeScript.build(schema: "shop", table: "wallets", primaryKey: [0], columns: columns, rows: rows, edits: edits)
     }
 
     @Test func updateUsesNumbersUnquotedAndThePrimaryKey() {
         var edits = RowEdits()
         edits.updates[2] = [2: "1"]
-        #expect(script(edits) == "UPDATE `mysapu`.`customer_points` SET `balance` = 1 WHERE `id` = 18;")
+        #expect(script(edits) == "UPDATE `shop`.`wallets` SET `balance` = 1 WHERE `id` = 18;")
     }
 
     @Test func updateQuotesTextAndWritesRealNull() {
         var edits = RowEdits()
         edits.updates[0] = [3: "it's \"ok\"", 2: nil]
-        #expect(script(edits) == "UPDATE `mysapu`.`customer_points` SET `balance` = NULL, `note` = 'it''s \"ok\"' WHERE `id` = 10;")
+        #expect(script(edits) == "UPDATE `shop`.`wallets` SET `balance` = NULL, `note` = 'it''s \"ok\"' WHERE `id` = 10;")
     }
 
     @Test func aliasedColumnsUseTheirRealName() {
         var edits = RowEdits()
         edits.updates[1] = [4: "Z"]
-        #expect(script(edits) == "UPDATE `mysapu`.`customer_points` SET `label` = 'Z' WHERE `id` = 11;")
+        #expect(script(edits) == "UPDATE `shop`.`wallets` SET `label` = 'Z' WHERE `id` = 11;")
     }
 
     @Test func editingThePrimaryKeyStillFindsTheOriginalRow() {
         var edits = RowEdits()
         edits.updates[0] = [0: "99"]
-        #expect(script(edits) == "UPDATE `mysapu`.`customer_points` SET `id` = 99 WHERE `id` = 10;")
+        #expect(script(edits) == "UPDATE `shop`.`wallets` SET `id` = 99 WHERE `id` = 10;")
     }
 
     @Test func deleteInsertOrderAndDefaults() {
@@ -51,9 +51,9 @@ import Testing
         edits.updates[1] = [3: "ignored, row is deleted"]
         edits.inserted = [[1: "5", 3: nil], [:]]
         #expect(script(edits) == """
-        DELETE FROM `mysapu`.`customer_points` WHERE `id` = 11;
-        INSERT INTO `mysapu`.`customer_points` (`customer_id`, `note`) VALUES (5, NULL);
-        INSERT INTO `mysapu`.`customer_points` () VALUES ();
+        DELETE FROM `shop`.`wallets` WHERE `id` = 11;
+        INSERT INTO `shop`.`wallets` (`customer_id`, `note`) VALUES (5, NULL);
+        INSERT INTO `shop`.`wallets` () VALUES ();
         """)
     }
 

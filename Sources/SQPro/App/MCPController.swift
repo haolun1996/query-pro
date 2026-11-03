@@ -75,14 +75,14 @@ final class MCPController {
         defaults.set(tokens, forKey: SettingsKey.mcpTokens)
     }
 
-    /// The MCP server name in Claude Code, e.g. `querywell-local-pos`.
+    /// The MCP server name in Claude Code, e.g. `query-pro-local-pos`.
     func serverName(for profile: ConnectionProfile) -> String {
         let slug = profile.name.lowercased()
             .map { $0.isLetter || $0.isNumber ? String($0) : "-" }
             .joined()
             .split(separator: "-", omittingEmptySubsequences: true)
             .joined(separator: "-")
-        return "querywell-" + (slug.isEmpty ? String(profile.id.uuidString.prefix(8)).lowercased() : slug)
+        return "query-pro-" + (slug.isEmpty ? String(profile.id.uuidString.prefix(8)).lowercased() : slug)
     }
 
     /// Run inside a project folder: Claude Code's default "local" scope adds it to that project only.
@@ -147,7 +147,7 @@ final class MCPController {
         if activity.count > Self.maxActivity { activity.removeLast(activity.count - Self.maxActivity) }
     }
 
-    /// Brings Querywell forward and asks. Deny is the default button, so a stray Return can't approve.
+    /// Brings Query Pro forward and asks. Deny is the default button, so a stray Return can't approve.
     fileprivate func askToApprove(_ sql: String, on profile: ConnectionProfile) -> Bool {
         NSApp.activate()
         let alert = NSAlert()
