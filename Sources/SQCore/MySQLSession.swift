@@ -2,6 +2,7 @@ import Foundation
 import MySQLNIO
 import NIOPosix
 import NIOSSL
+import Synchronization
 
 public enum SessionError: Error, LocalizedError {
     case notConnected
@@ -9,6 +10,8 @@ public enum SessionError: Error, LocalizedError {
     case lostDuringStatement
     /// The connection dropped inside a transaction; the server rolled the transaction back.
     case lostTransaction
+    /// Opening the connection (TCP, TLS, login) didn't finish in time.
+    case connectTimedOut
 
     public var errorDescription: String? {
         switch self {
@@ -18,6 +21,8 @@ public enum SessionError: Error, LocalizedError {
             "The connection to the server was lost while this statement was running. Query Pro has reconnected; check whether the statement took effect before running it again."
         case .lostTransaction:
             "The connection to the server was lost during an open transaction, so the server rolled it back. Query Pro has reconnected; nothing since START TRANSACTION was saved."
+        case .connectTimedOut:
+            "The server accepted the connection but didn't finish logging in. Check that it is running normally, then try again."
         }
     }
 }
@@ -41,11 +46,15 @@ public actor MySQLSession {
     private var lastUsed = ContinuousClock.now
     private var reconnected = false
     /// After this long without a statement, check the connection is still alive before using it.
-    private static let idleCheck = Duration.seconds(30)
+    private let idleCheck: Duration
+    /// Longest wait for a new connection, including the login handshake.
+    private let connectTimeout: Duration
 
-    public init(profile: ConnectionProfile, password: String?) {
+    public init(profile: ConnectionProfile, password: String?, idleCheck: Duration = .seconds(30), connectTimeout: Duration = .seconds(15)) {
         self.profile = profile
         self.password = password
+        self.idleCheck = idleCheck
+        self.connectTimeout = connectTimeout
         self.database = profile.defaultSchema
     }
 
@@ -79,7 +88,8 @@ public actor MySQLSession {
             let hadTransaction = inTransaction
             try await reconnect()
             if hadTransaction { throw SessionError.lostTransaction }
-            guard SQL.isReadOnly(sql) else { throw SessionError.lostDuringStatement }
+            // USE changes nothing on the server, so running it again is as safe as a SELECT.
+            guard SQL.isReadOnly(sql) || SQL.useTarget(sql) != nil else { throw SessionError.lostDuringStatement }
             return try await run(sql)
         }
     }
@@ -87,7 +97,7 @@ public actor MySQLSession {
     // MARK: Connection health
 
     private func open() async throws {
-        connection = try await Self.open(profile: profile, password: password, database: database)
+        connection = try await Self.open(profile: profile, password: password, database: database, timeout: connectTimeout)
         inTransaction = false
         lastUsed = .now
         connectionID = try await run("SELECT CONNECTION_ID()").rows.first?.first.flatMap { $0.flatMap(UInt64.init) }
@@ -111,7 +121,7 @@ public actor MySQLSession {
     private func reviveIfNeeded() async throws {
         guard let connection else { return }
         var alive = !connection.isClosed
-        if alive, ContinuousClock.now - lastUsed > Self.idleCheck {
+        if alive, ContinuousClock.now - lastUsed > idleCheck {
             alive = await Self.ping(connection)
         }
         guard !alive else { return }
@@ -124,7 +134,8 @@ public actor MySQLSession {
         await withTaskGroup(of: Bool.self) { group in
             group.addTask { (try? await connection.simpleQuery("SELECT 1").get()) != nil }
             group.addTask {
-                try? await Task.sleep(for: .seconds(5))
+                // Cancelled once the ping answers; without this check every ping would close the live connection.
+                guard (try? await Task.sleep(for: .seconds(5))) != nil else { return true }
                 // Closing fails the stuck ping, so the group can finish.
                 connection.channel.close(promise: nil)
                 return false
@@ -196,12 +207,12 @@ public actor MySQLSession {
     /// Stops the statement currently running on this session, using a second short-lived connection.
     public func cancelRunningQuery() async throws {
         guard let connectionID else { return }
-        let killer = try await Self.open(profile: profile, password: password, database: "")
+        let killer = try await Self.open(profile: profile, password: password, database: "", timeout: connectTimeout)
         defer { _ = killer.close() }
         _ = try await killer.simpleQuery("KILL QUERY \(connectionID)").get()
     }
 
-    private static func open(profile: ConnectionProfile, password: String?, database: String) async throws -> MySQLConnection {
+    private static func open(profile: ConnectionProfile, password: String?, database: String, timeout: Duration) async throws -> MySQLConnection {
         let eventLoop = MultiThreadedEventLoopGroup.singleton.next()
         let address = try SocketAddress.makeAddressResolvingHost(profile.host, port: profile.port)
         var tls: TLSConfiguration?
@@ -211,14 +222,39 @@ public actor MySQLSession {
             configuration.certificateVerification = .none
             tls = configuration
         }
-        return try await MySQLConnection.connect(
+        let connecting = MySQLConnection.connect(
             to: address,
             username: profile.user,
             database: database,
             password: password,
             tlsConfiguration: tls,
             on: eventLoop
-        ).get()
+        )
+        return try await withDeadline(timeout, connecting, on: eventLoop)
+    }
+
+    /// mysql-nio never completes `connect` when the socket closes during the login handshake, and has no timeout of
+    /// its own, so a server that stops answering (after sleep, say) would leave the caller waiting forever.
+    private static func withDeadline(
+        _ timeout: Duration,
+        _ connecting: EventLoopFuture<MySQLConnection>,
+        on eventLoop: any EventLoop
+    ) async throws -> MySQLConnection {
+        let finished = Mutex(false)
+        let claim: @Sendable () -> Bool = { finished.withLock { done in defer { done = true }; return !done } }
+        return try await withCheckedThrowingContinuation { continuation in
+            let deadline = eventLoop.scheduleTask(in: .milliseconds(Int64(timeout / .milliseconds(1)))) {
+                if claim() { continuation.resume(throwing: SessionError.connectTimedOut) }
+            }
+            connecting.whenComplete { result in
+                deadline.cancel()
+                if claim() {
+                    continuation.resume(with: result)
+                } else if case .success(let late) = result {
+                    _ = late.close()
+                }
+            }
+        }
     }
 
     /// Numbers and dates also use the `binary` character set, so only string-like types count as binary data.
