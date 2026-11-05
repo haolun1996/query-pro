@@ -69,7 +69,7 @@ struct QueryCommands: Commands {
 
     /// The table selected in the schema tree, for Import CSV.
     private var selectedTable: (SchemaNode, TableNode)? {
-        guard let tab, case .table(let schema, let table) = tab.sidebarSelection,
+        guard let tab, case .table(let schema, let table) = tab.selectedObject,
               let schemaNode = tab.schemaNode(schema), let tableNode = tab.tableNode(schema, table), !tableNode.isView
         else { return nil }
         return (schemaNode, tableNode)

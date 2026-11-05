@@ -124,6 +124,12 @@ One level only. A group exists while at least one connection is in it.
   column or schema has that name. `form` only becomes FROM after a select list or DELETE with no FROM yet; `oder` only
   becomes ORDER after FROM. Backspace right after puts back what was typed and stops that typo being fixed again in
   that editor; ⌘Z undoes just the correction. Settings › Editor turns it off.
+- **Alter / Drop schemas**: ⌘-click / ⇧-click select several objects in the schema tree. Right-click on schemas →
+  Alter Schema… / Alter N Schemas… (default character set and collation, starting from the current ones; only
+  schemas that change get a statement) and Drop Schema… / Drop N Schemas… (lists the tables, views and routines each
+  holds). Both show the SQL first and run it on the query session, logged and in History; it stops at the first error
+  (DDL can't be rolled back). Drop has no default button, is disabled for `mysql`, `sys`, `information_schema` and
+  `performance_schema`, and red connections ask once more.
 
 ## Build order
 1. ✅ Driver check (`sqcheck`)
@@ -135,3 +141,4 @@ One level only. A group exists while at least one connection is in it.
 7. ✅ Phase 2
 8. ✅ Phase 3: reconnect, query history, CSV import, local server start/stop
 9. ✅ Keyword autocorrect
+10. ✅ Multi-select in the schema tree, Alter / Drop schemas

@@ -45,6 +45,9 @@ struct ConnectionTabView: View {
             }
         }
         .sheet(isPresented: $tab.needsPassword) { passwordSheet }
+        .sheet(item: $tab.schemaChange) { change in
+            SchemaChangeSheet(tab: tab, change: change)
+        }
         .sheet(item: $tab.importJob) { job in
             CSVImportSheet(tab: tab, job: job)
                 // Closing mid-import would hide the progress; Stop first.

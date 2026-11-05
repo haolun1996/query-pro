@@ -34,8 +34,16 @@ final class ConnectionTab: Identifiable {
     private(set) var schemas: [SchemaNode] = []
     /// The schema queries run against (`USE …`), shown in bold.
     private(set) var currentSchema: String?
-    var sidebarSelection: SchemaSelection?
+    /// ⌘-click and ⇧-click select several objects.
+    var sidebarSelection: Set<SchemaSelection> = []
     var sidebarFilter = ""
+    /// The Alter / Drop Schemas sheet.
+    var schemaChange: SchemaChange?
+
+    /// The one selected object; `nil` when nothing or several are selected.
+    var selectedObject: SchemaSelection? {
+        sidebarSelection.count == 1 ? sidebarSelection.first : nil
+    }
 
     // Query tabs
     private(set) var queries: [QueryDocument] = []
@@ -141,6 +149,8 @@ final class ConnectionTab: Identifiable {
         let names = profile.visibleSchemas(try await metaSession.execute("SHOW DATABASES").rows.compactMap { $0.first ?? nil })
         let expanded = Set(schemas.filter(\.isExpanded).map(\.name))
         schemas = names.map { SchemaNode(name: $0) }
+        // Dropped schemas (and their objects) leave the selection.
+        sidebarSelection = sidebarSelection.filter { names.contains($0.schema) }
         for schema in schemas where expanded.contains(schema.name) {
             schema.isExpanded = true
             await loadObjects(of: schema)
@@ -469,9 +479,16 @@ final class ConnectionTab: Identifiable {
     }
 
     /// Runs statements in order and stops at the first error, like Workbench.
-    /// Result sets go to `document`'s result tabs.
-    private func execute(_ statements: [String], applyLimit: Bool, document: QueryDocument?) async {
-        guard let querySession, !isRunning else { return }
+    /// Result sets go to `document`'s result tabs. Returns the error that stopped it, if any.
+    @discardableResult
+    private func execute(
+        _ statements: [String], applyLimit: Bool, document: QueryDocument?, recordsHistory: Bool? = nil
+    ) async -> String? {
+        guard let querySession else { return "Not connected." }
+        guard !isRunning else { return "Another query is still running." }
+        // Queries typed in the editor go to History; clicks in the sidebar (USE …) don't.
+        let recordsHistory = recordsHistory ?? (document != nil)
+        var failure: String?
         isRunning = true
         defer { isRunning = false }
 
@@ -488,8 +505,7 @@ final class ConnectionTab: Identifiable {
                 var response = result.summary
                 if limited, result.rows.count == rowLimit { response += " (limited)" }
                 updateLog(entry, response: response, status: .success, duration: result.duration)
-                // Queries typed in the editor go to History; clicks in the sidebar (USE …) don't.
-                if document != nil { recordHistory(statement, schema: schema, succeeded: true, response: response, duration: result.duration) }
+                if recordsHistory { recordHistory(statement, schema: schema, succeeded: true, response: response, duration: result.duration) }
                 if result.hasResultSet, let document {
                     newResults.append(ResultTab(title: document.nextResultTitle(for: result), result: result, appliedLimit: limited ? rowLimit : nil))
                 }
@@ -497,7 +513,8 @@ final class ConnectionTab: Identifiable {
                 await noteReconnect()
                 let message = ErrorText.message(for: error)
                 updateLog(entry, response: message, status: .error, duration: nil)
-                if document != nil { recordHistory(statement, schema: schema, succeeded: false, response: message, duration: nil) }
+                if recordsHistory { recordHistory(statement, schema: schema, succeeded: false, response: message, duration: nil) }
+                failure = message
                 break
             }
         }
@@ -511,6 +528,74 @@ final class ConnectionTab: Identifiable {
             try? await reloadSchemas()
         }
         preloadCompletion()
+        return failure
+    }
+
+    // MARK: Alter / Drop schemas
+
+    func alterSchemas(_ names: [String]) {
+        schemaChange = SchemaChange(kind: .alter, schemas: names)
+    }
+
+    func dropSchemas(_ names: [String]) {
+        schemaChange = SchemaChange(kind: .drop, schemas: names.filter { !SchemaScript.isSystem($0) })
+    }
+
+    /// What each schema holds and its default character set, for the Alter / Drop sheet.
+    func schemaDetails(_ names: [String]) async -> [String: SchemaChange.Details] {
+        guard let metaSession, !names.isEmpty else { return [:] }
+        let list = names.map { SQL.quoteString($0) }.joined(separator: ", ")
+        var details: [String: SchemaChange.Details] = [:]
+        do {
+            for row in try await metaSession.execute("""
+                SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME
+                FROM information_schema.SCHEMATA WHERE SCHEMA_NAME IN (\(list))
+                """).rows {
+                guard let name = row[0] else { continue }
+                details[name] = SchemaChange.Details(charset: row[1] ?? "", collation: row[2] ?? "")
+            }
+            for row in try await metaSession.execute("""
+                SELECT TABLE_SCHEMA, SUM(TABLE_TYPE = 'VIEW'), SUM(TABLE_TYPE <> 'VIEW')
+                FROM information_schema.TABLES WHERE TABLE_SCHEMA IN (\(list)) GROUP BY TABLE_SCHEMA
+                """).rows {
+                guard let name = row[0] else { continue }
+                details[name]?.views = Int(row[1] ?? "") ?? 0
+                details[name]?.tables = Int(row[2] ?? "") ?? 0
+            }
+            for row in try await metaSession.execute("""
+                SELECT ROUTINE_SCHEMA, COUNT(*) FROM information_schema.ROUTINES
+                WHERE ROUTINE_SCHEMA IN (\(list)) GROUP BY ROUTINE_SCHEMA
+                """).rows {
+                guard let name = row[0] else { continue }
+                details[name]?.routines = Int(row[1] ?? "") ?? 0
+            }
+        } catch {
+            appendLog(action: "Load schema details", response: ErrorText.message(for: error), status: .error)
+        }
+        return details
+    }
+
+    /// Character sets (with their default collation) and every collation, for the Alter sheet.
+    func characterSets() async -> (charsets: [(name: String, defaultCollation: String)], collations: [(name: String, charset: String)]) {
+        guard let metaSession else { return ([], []) }
+        do {
+            let charsets = try await metaSession.execute(
+                "SELECT CHARACTER_SET_NAME, DEFAULT_COLLATE_NAME FROM information_schema.CHARACTER_SETS ORDER BY CHARACTER_SET_NAME"
+            ).rows.compactMap { row in row[0].map { (name: $0, defaultCollation: row[1] ?? "") } }
+            let collations = try await metaSession.execute(
+                "SELECT COLLATION_NAME, CHARACTER_SET_NAME FROM information_schema.COLLATIONS ORDER BY COLLATION_NAME"
+            ).rows.compactMap { row in row[0].map { (name: $0, charset: row[1] ?? "") } }
+            return (charsets, collations)
+        } catch {
+            appendLog(action: "Load character sets", response: ErrorText.message(for: error), status: .error)
+            return ([], [])
+        }
+    }
+
+    /// Runs the sheet's statements on the query session, logged and kept in History. DDL can't be rolled back,
+    /// so it stops at the first error with the earlier statements done.
+    func runSchemaScript(_ statements: [String]) async -> String? {
+        await execute(statements, applyLimit: false, document: nil, recordsHistory: true)
     }
 
     // MARK: Editing results
@@ -861,6 +946,15 @@ enum SchemaSelection: Hashable {
     case table(schema: String, table: String)
     case routine(schema: String, name: String, kind: String)
 
+    /// The schema the object is in (or is).
+    var schema: String {
+        switch self {
+        case .schema(let name): name
+        case .table(let schema, _): schema
+        case .routine(let schema, _, _): schema
+        }
+    }
+
     /// The object's own name, for Copy Name / Send to SQL Editor.
     var name: String {
         switch self {
@@ -869,6 +963,25 @@ enum SchemaSelection: Hashable {
         case .routine(_, let name, _): name
         }
     }
+}
+
+/// The Alter / Drop Schemas sheet's subject.
+struct SchemaChange: Identifiable {
+    enum Kind {
+        case alter, drop
+    }
+
+    struct Details {
+        var charset: String
+        var collation: String
+        var tables = 0
+        var views = 0
+        var routines = 0
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let schemas: [String]
 }
 
 struct ActionLogEntry: Identifiable {

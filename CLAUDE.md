@@ -23,7 +23,7 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
 
 | Path | What |
 |---|---|
-| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `SQLCompletion` (autocomplete context + suggestions), `SQLAutoCorrect` (keyword typos), `ResultExport` (CSV/JSON/INSERT), `CSV`/`CSVImportPlan` (import), `QueryHistoryStore`, `SavedQuery`/`SavedQueryStore`, `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
+| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `SQLCompletion` (autocomplete context + suggestions), `SQLAutoCorrect` (keyword typos), `SchemaScript` (Alter / Drop Schemas SQL), `ResultExport` (CSV/JSON/INSERT), `CSV`/`CSVImportPlan` (import), `QueryHistoryStore`, `SavedQuery`/`SavedQueryStore`, `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
 | `Sources/SQMCP` | No UI. `MCPHTTPServer` (NIO HTTP on 127.0.0.1, one endpoint per connection at `/mcp/<connection id>` with its own bearer token, one MCP session per client, adapted from swift-sdk's conformance server) and `SQLTools` (six tools scoped to one connection). Talks to the app through `MCPProvider` |
 | `Sources/SQPro/App` | `SQProApp`, `Workspace` (tabs), `ConnectionsModel` (saved connections), `SavedQueriesModel`, `TabStrip`, `QueryCommands` (menus + shortcuts), `SettingsView`, `DebugSnapshot` |
 | `Sources/SQPro/Home` | Home screen: connection cards, groups, add/edit form |
@@ -43,6 +43,8 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
 - **Keychain only through `/usr/bin/security`** (`Keychain.swift`), never Security.framework. The app is ad-hoc signed, its signature changes every build, and framework access would prompt after each rebuild. Read with `-g` (stderr), not `-w`: `-w` hex-encodes non-ASCII passwords ambiguously.
 - **No `HSplitView` / `NavigationSplitView` / `.listStyle(.sidebar)`** in the main window: they stretch into the hidden title bar and cover the tab strip. Use `SidebarSplit` / `VerticalSplit`.
 - `VerticalSplit(showsBottom:)` hides a pane without changing the top view's identity; the SQL editor must not be rebuilt when results appear.
+- The schema tree selects several objects (`sidebarSelection` is a `Set`); use `selectedObject` for "the one selected
+  thing". Alter / Drop Schemas build SQL in `SchemaScript` (SQCore) and run through `runSchemaScript`.
 - Schema tree rows need `.listRowSeparator(.hidden)`; double-click goes through `.contextMenu(forSelectionType:primaryAction:)`, not `onTapGesture(count: 2)` (the List swallows it).
 - Each connection tab has **two sessions**: one for user queries, one for metadata (schema tree, table info), so a slow query never blocks the sidebar. Stop sends `KILL QUERY` from a third, short-lived connection.
 - Shortcuts are menu items in `QueryCommands`, so they work while the NSTextView has focus.
@@ -102,8 +104,9 @@ SQPRO_SNAPSHOT=/path/out.png "dist/Query Pro.app/Contents/MacOS/SQPro"
 Also `SQPRO_OPEN_TEMP=root@localhost:3306` (throwaway connection, never saved), `SQPRO_TABLE_INFO=schema.table`,
 `SQPRO_TABLE_SECTION=Indexes`, `SQPRO_DEMO_EDITS=1` (in-memory edits, never applied), `SQPRO_SNAPSHOT_DELAY=4`,
 `SQPRO_TYPE="select * from ad"` (types key by key, `⌫` is Backspace; prints the text and the autocomplete list),
-`SQPRO_SAVED_QUERIES=1|save`, `SQPRO_BOTTOM=history`, `SQPRO_DROP_SQL` (kill the query connection, then run SQL:
-tests reconnect),
+`SQPRO_SAVED_QUERIES=1|save`, `SQPRO_BOTTOM=history`, `SQPRO_SCHEMAS=drop:a,b` (select schemas, open the Drop /
+`alter:` sheet; `SQPRO_SCHEMAS_RUN=1` runs it, scratch databases only), `SQPRO_DROP_SQL` (kill the query connection,
+then run SQL: tests reconnect),
 `SQPRO_IMPORT=schema.table:/file.csv` (+ `SQPRO_IMPORT_RUN=1`, `SQPRO_IMPORT_DUPLICATES=skip`; scratch databases only).
 Temp connections write history files under a random id; delete them after testing.
 Other windows (popovers, the autocomplete list) are saved next to it as `out-1.png` …. The capture uses

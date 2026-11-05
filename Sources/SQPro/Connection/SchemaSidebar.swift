@@ -19,10 +19,10 @@ struct SchemaSidebar: View {
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 22)
             .contextMenu(forSelectionType: SchemaSelection.self) { items in
-                if let item = items.first { menu(for: item) }
+                menu(for: items)
             } primaryAction: { items in
                 // Double-click (or Return) on a row.
-                if let item = items.first { open(item) }
+                if items.count == 1, let item = items.first { open(item) }
             }
 
             Divider()
@@ -88,6 +88,35 @@ struct SchemaSidebar: View {
         }
     }
 
+    /// Right-click on a selected row acts on the whole selection; on any other row, on that row alone.
+    @ViewBuilder
+    private func menu(for items: Set<SchemaSelection>) -> some View {
+        let names = items.compactMap { item -> String? in
+            if case .schema(let name) = item { name } else { nil }
+        }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        if items.count == 1, let item = items.first {
+            menu(for: item)
+        } else if !items.isEmpty, names.count == items.count {
+            schemaChangeButtons(names)
+            Divider()
+            Button("Copy Names") { copy(names.joined(separator: ", ")) }
+            Button("Send to SQL Editor") { sendToEditor(names) }
+        } else if !items.isEmpty {
+            let sorted = items.map(\.name).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            Button("Copy Names") { copy(sorted.joined(separator: ", ")) }
+            Button("Send to SQL Editor") { sendToEditor(sorted) }
+        }
+    }
+
+    /// "Alter 2 Schemas…" / "Drop 2 Schemas…", like Workbench. System schemas can't be dropped.
+    @ViewBuilder
+    private func schemaChangeButtons(_ names: [String]) -> some View {
+        let noun = names.count == 1 ? "Schema" : "\(names.count) Schemas"
+        Button("Alter \(noun)…") { tab.alterSchemas(names) }
+        Button("Drop \(noun)…") { tab.dropSchemas(names) }
+            .disabled(names.contains(where: SchemaScript.isSystem))
+    }
+
     @ViewBuilder
     private func menu(for item: SchemaSelection) -> some View {
         switch item {
@@ -96,6 +125,8 @@ struct SchemaSidebar: View {
             Button("Refresh") {
                 if let schema = tab.schemaNode(name) { Task { await tab.loadObjects(of: schema, force: true) } }
             }
+            Divider()
+            schemaChangeButtons([name])
         case .table(let schema, let table):
             Button(tab.rowLimit.map { "Select Rows - Limit \($0)" } ?? "Select Rows") { open(item) }
             Button("Table Info") {
@@ -115,7 +146,11 @@ struct SchemaSidebar: View {
     }
 
     private func sendToEditor(_ item: SchemaSelection) {
-        tab.selectedQuery?.editor?.insertAtCursor(SQL.quoteIdentifier(item.name))
+        sendToEditor([item.name])
+    }
+
+    private func sendToEditor(_ names: [String]) {
+        tab.selectedQuery?.editor?.insertAtCursor(names.map(SQL.quoteIdentifier).joined(separator: ", "))
     }
 
     /// With a filter: schemas whose name matches, or that have a loaded object that matches.
@@ -284,12 +319,14 @@ private struct ObjectInfoPanel: View {
                     .textSelection(.enabled)
             }
         }
-        .task(id: tab.sidebarSelection) { await loadIfNeeded() }
+        .task(id: tab.selectedObject) { await loadIfNeeded() }
     }
 
     @ViewBuilder
     private var content: some View {
-        switch tab.sidebarSelection {
+        switch tab.selectedObject {
+        case nil where tab.sidebarSelection.count > 1:
+            Text("\(tab.sidebarSelection.count) objects selected").foregroundStyle(.secondary)
         case nil:
             Text("No object selected").foregroundStyle(.secondary)
         case .schema(let name):
@@ -325,7 +362,7 @@ private struct ObjectInfoPanel: View {
     }
 
     private func loadIfNeeded() async {
-        guard case .table(let schemaName, let tableName) = tab.sidebarSelection,
+        guard case .table(let schemaName, let tableName) = tab.selectedObject,
               let schema = tab.schemas.first(where: { $0.name == schemaName }),
               let table = findTable(schemaName, tableName)
         else { return }

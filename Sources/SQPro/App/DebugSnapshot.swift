@@ -16,6 +16,8 @@ import SQCore
 ///     SQPRO_DROP_SQL="select 1;"      after SQPRO_SQL: kill the query connection server-side, then run this
 ///     SQPRO_IMPORT=schema.table:/path.csv   open the CSV import sheet (SQPRO_IMPORT_RUN=1 also runs it and prints the outcome;
 ///                                     SQPRO_IMPORT_DUPLICATES=stop|skip|replace)
+///     SQPRO_SCHEMAS=drop:a,b          select these schemas and open the Drop (or alter:a,b Alter) sheet
+///     SQPRO_SCHEMAS_RUN=1             …instead run its SQL (alter: latin1) and print the outcome (scratch databases only!)
 ///     SQPRO_TABLE_INFO=pos.admins     open that table's info tab
 ///     SQPRO_TABLE_SECTION=Indexes     …on this section
 ///     SQPRO_TYPE="select * from ad"   type this into the editor key by key (autocomplete opens) and print the list;
@@ -110,6 +112,24 @@ enum DebugSnapshot {
                             print("IMPORT: \(job.phase)")
                         }
                     }
+                }
+            }
+            if let spec = environment["SQPRO_SCHEMAS"], let colon = spec.firstIndex(of: ":"), let tab = workspace.selectedTab {
+                for _ in 0..<50 where !isConnected(tab) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                let names = spec[spec.index(after: colon)...].split(separator: ",").map(String.init)
+                tab.sidebarSelection = Set(names.map { .schema($0) })
+                if environment["SQPRO_SCHEMAS_RUN"] != nil {
+                    let statements = spec.hasPrefix("drop")
+                        ? SchemaScript.drop(names)
+                        : SchemaScript.alter(names, charset: "latin1", collation: "latin1_swedish_ci")
+                    print("SCHEMAS RUN: \(await tab.runSchemaScript(statements) ?? "ok")")
+                    print("SCHEMAS LEFT: \(tab.schemas.map(\.name).filter { names.contains($0) }), selection: \(tab.sidebarSelection)")
+                } else if spec.hasPrefix("drop") {
+                    tab.dropSchemas(names)
+                } else {
+                    tab.alterSchemas(names)
                 }
             }
             if let target = environment["SQPRO_TABLE_INFO"], let tab = workspace.selectedTab {
