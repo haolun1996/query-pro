@@ -18,7 +18,8 @@ import SQCore
 ///                                     SQPRO_IMPORT_DUPLICATES=stop|skip|replace)
 ///     SQPRO_TABLE_INFO=pos.admins     open that table's info tab
 ///     SQPRO_TABLE_SECTION=Indexes     …on this section
-///     SQPRO_TYPE="select * from ad"   type this into the editor key by key (autocomplete opens) and print the list
+///     SQPRO_TYPE="select * from ad"   type this into the editor key by key (autocomplete opens) and print the list;
+///                                     ⌫ is Backspace
 ///     SQPRO_SAVED_QUERIES=1           open the Saved Queries popover (=save: on its save form)
 ///     SQPRO_SNAPSHOT=/path/out.png    save the window as a PNG (other windows, e.g. popovers, as out-1.png …), then quit
 ///     SQPRO_SNAPSHOT_DELAY=4          seconds to wait first (default 4)
@@ -137,8 +138,13 @@ enum DebugSnapshot {
                 editor.window?.makeKeyAndOrderFront(nil)
                 editor.window?.makeFirstResponder(editor)
                 for character in typed {
-                    editor.insertText(String(character), replacementRange: editor.selectedRange())
+                    if character == "⌫" {
+                        editor.deleteBackward(nil)
+                    } else {
+                        editor.insertText(String(character), replacementRange: editor.selectedRange())
+                    }
                 }
+                print("TYPED: \(editor.string)")
                 try? await Task.sleep(for: .seconds(1))
                 print("COMPLETIONS: \(editor.debugCompletionNames.prefix(15))")
             }

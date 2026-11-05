@@ -118,6 +118,12 @@ One level only. A group exists while at least one connection is in it.
   `com.oracle.oss.mysql.mysqld`) as Running / Stopped with Start / Stop; "Can't connect" to localhost:3306 offers
   Start MySQL Server, then reconnects. Starting and stopping ask for an administrator password (macOS prompt).
   Hidden when that install isn't there.
+- **Keyword autocorrect** in the query editor: a hand-picked list of common typos (`seelct`, `fomr`, `wehre`, `limt` …)
+  is fixed when the word is finished (space, Return, Tab, `(`, `)`, `,`, `;`), keeping the typed case. Never inside
+  strings, comments, backticks or `a.b` names, after FROM/JOIN/INTO/AS (a name goes there), or when a loaded table,
+  column or schema has that name. `form` only becomes FROM after a select list or DELETE with no FROM yet; `oder` only
+  becomes ORDER after FROM. Backspace right after puts back what was typed and stops that typo being fixed again in
+  that editor; ⌘Z undoes just the correction. Settings › Editor turns it off.
 
 ## Build order
 1. ✅ Driver check (`sqcheck`)
@@ -128,3 +134,4 @@ One level only. A group exists while at least one connection is in it.
 6. ✅ MCP server
 7. ✅ Phase 2
 8. ✅ Phase 3: reconnect, query history, CSV import, local server start/stop
+9. ✅ Keyword autocorrect

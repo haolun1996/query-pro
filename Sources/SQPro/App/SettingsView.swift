@@ -5,6 +5,7 @@ import SQCore
 /// App settings (Query Pro › Settings…, ⌘,).
 struct SettingsView: View {
     @AppStorage(SettingsKey.showsDDL) private var showsDDL = true
+    @AppStorage(SettingsKey.autoCorrectKeywords) private var autoCorrectKeywords = true
     @Environment(MCPController.self) private var mcp
 
     var body: some View {
@@ -13,6 +14,16 @@ struct SettingsView: View {
             Section("Table Info") {
                 Toggle("Show DDL section", isOn: $showsDDL)
                 Text("The CREATE TABLE statement, shown as the last section when you open a table's info.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Editor") {
+                Toggle("Correct misspelled keywords", isOn: $autoCorrectKeywords)
+                Text("""
+                    Fixes common typos like seelct or wehre when you finish the word. Press Delete right after to \
+                    keep what you typed.
+                    """)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -75,6 +86,7 @@ struct CopyClaudeCommandButton: View {
 
 enum SettingsKey {
     static let showsDDL = "showsDDL"
+    static let autoCorrectKeywords = "autoCorrectKeywords"
     static let mcpEnabled = "mcpEnabled"
     static let mcpPort = "mcpPort"
     static let mcpTokens = "mcpTokens"
