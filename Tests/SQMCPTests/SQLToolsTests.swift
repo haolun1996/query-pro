@@ -86,6 +86,59 @@ private actor FakeProvider: MCPProvider {
         #expect(await provider.approvalRequests == ["update t set a = 1"])
     }
 
+    @Test func tableAndImportToolsNeedReadWriteAccess() async {
+        let tools = SQLTools(provider: FakeProvider([readOnly]), connection: readOnly.id)
+        for (tool, arguments) in [
+            ("drop_tables", ["database": Value.string("pos")]),
+            ("truncate_tables", ["database": .string("pos")]),
+            ("import_sql", ["mode": .string("data_only"), "sql": .string("insert into t values (1)")]),
+        ] {
+            let result = await tools.call(tool, arguments: arguments)
+            #expect(result.isError == true)
+            #expect(text(result).contains("read-only for AI"), "\(tool)")
+        }
+    }
+
+    @Test func tableToolsRefuseSystemDatabases() async {
+        let tools = SQLTools(provider: FakeProvider([live], approves: true), connection: live.id)
+        let result = await tools.call("drop_tables", arguments: ["database": "mysql"])
+        #expect(text(result).contains("system database"))
+    }
+
+    @Test func importChecksItsArgumentsBeforeConnecting() async {
+        let tools = SQLTools(provider: FakeProvider([live], approves: true), connection: live.id)
+        #expect(text(await tools.call("import_sql", arguments: ["mode": "everything", "sql": "select 1"])).contains("mode must be"))
+        #expect(text(await tools.call("import_sql", arguments: ["mode": "data_only"])).contains("path or sql"))
+        #expect(text(await tools.call("import_sql", arguments: ["mode": "data_only", "path": "/etc/passwd"])).contains(".sql file"))
+        #expect(text(await tools.call("import_sql", arguments: ["mode": "data_only", "path": "notes.sql"])).contains(".sql file"))
+        let schemaOnly = await tools.call("import_sql", arguments: ["mode": "data_only", "sql": "create table t (a int);"])
+        #expect(text(schemaOnly).contains("no data statements"))
+    }
+
+    @Test func exportOnlyWritesSQLFiles() async {
+        let tools = SQLTools(provider: FakeProvider([readOnly]), connection: readOnly.id)
+        for path in ["/tmp/x.txt", "relative.sql", "/Users/me/.zshrc"] {
+            let result = await tools.call("export_sql", arguments: ["database": "pos", "content": "data_only", "path": .string(path)])
+            #expect(text(result).contains(".sql file"), "\(path)")
+        }
+        let badContent = await tools.call("export_sql", arguments: ["database": "pos", "content": "all", "path": "/tmp/x.sql"])
+        #expect(text(badContent).contains("content must be"))
+    }
+
+    @Test func productionImportsAskWithASummary() async {
+        let provider = FakeProvider([live], approves: false)
+        let tools = SQLTools(provider: provider, connection: live.id)
+        let result = await tools.call("import_sql", arguments: [
+            "mode": "structure_and_data", "database": "shop", "sql": "create table t (a int); insert into t values (1);",
+        ])
+        #expect(text(result).contains("declined"))
+        let request = await provider.approvalRequests.first ?? ""
+        #expect(request.contains("into shop"))
+        #expect(request.contains("2 statement(s), 1 CREATE TABLE, 1 data statement(s)"))
+        let logged = await provider.activity.first?.sql
+        #expect(logged == "-- Import 49 characters of SQL (structure_and_data) into `shop`")
+    }
+
     @Test func eachConnectionOnlyAcceptsItsOwnToken() async {
         let a = UUID(), b = UUID()
         let tokens = [a: "token-a", b: "token-b"]

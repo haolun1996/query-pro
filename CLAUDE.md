@@ -23,8 +23,8 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
 
 | Path | What |
 |---|---|
-| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `SQLCompletion` (autocomplete context + suggestions), `SQLAutoCorrect` (keyword typos), `SchemaScript` (Alter / Drop Schemas SQL), `ResultExport` (CSV/JSON/INSERT), `CSV`/`CSVImportPlan` (import), `QueryHistoryStore`, `SavedQuery`/`SavedQueryStore`, `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
-| `Sources/SQMCP` | No UI. `MCPHTTPServer` (NIO HTTP on 127.0.0.1, one endpoint per connection at `/mcp/<connection id>` with its own bearer token, one MCP session per client, adapted from swift-sdk's conformance server) and `SQLTools` (six tools scoped to one connection). Talks to the app through `MCPProvider` |
+| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `SQLCompletion` (autocomplete context + suggestions), `SQLAutoCorrect` (keyword typos), `SchemaScript` (Alter / Drop Schemas, Drop / Truncate Tables SQL), `SQLDump`/`SQLDumpImport`/`SQLDumpExport` (`.sql` dumps), `ResultExport` (CSV/JSON/INSERT), `CSV`/`CSVImportPlan` (import), `QueryHistoryStore`, `SavedQuery`/`SavedQueryStore`, `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
+| `Sources/SQMCP` | No UI. `MCPHTTPServer` (NIO HTTP on 127.0.0.1, one endpoint per connection at `/mcp/<connection id>` with its own bearer token, one MCP session per client, adapted from swift-sdk's conformance server) and `SQLTools` (ten tools scoped to one connection). Talks to the app through `MCPProvider` |
 | `Sources/SQPro/App` | `SQProApp`, `Workspace` (tabs), `ConnectionsModel` (saved connections), `SavedQueriesModel`, `TabStrip`, `QueryCommands` (menus + shortcuts), `SettingsView`, `DebugSnapshot` |
 | `Sources/SQPro/Home` | Home screen: connection cards, groups, add/edit form |
 | `Sources/SQPro/Connection` | `ConnectionTab` (model for one open connection), schema sidebar, query area, table info tab, Action Output, History, CSV import sheet |
@@ -81,6 +81,17 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
   `KILL` against local MySQL.
 - **History** is JSON Lines, appended per statement (`ConnectionTab.recordHistory`), loaded only when the panel opens.
   Always pass SQL through `QueryHistoryStore.redacted` first.
+- **Drop / Truncate Tables** (`TableChangeSheet`) run `SchemaScript.dropTables` / `truncateTables` through
+  `ConnectionTab.runTableScript`: query session, between `SET FOREIGN_KEY_CHECKS = 0 / 1`, and it turns checks back on
+  if a statement in between fails. Progress goes to the sheet; dialogs (drop/truncate, imports, export) never write
+  to Action Output, only one History entry. MCP `drop_tables` / `truncate_tables` use the same SQL.
+- **SQL dump import**: `SQLDump.statements` has its own splitter (not `SQL.statements`): it follows `DELIMITER` lines
+  and keeps `/*! … */` executable comments as code. `SQLDump.plan(mode:)` filters for data only; `SQLDumpImport.run`
+  is shared by the app (`SQLImportSheet`, fresh session) and MCP `import_sql`. Data only = one transaction; tables and
+  data stops at the first error. MCP `import_sql` / `export_sql` only take absolute `.sql` paths.
+- **SQL dump export** (`SQLDumpExport`, shared by `SQLExportSheet` and MCP `export_sql`) must stay importable by
+  `SQLDump` and the `mysql` client; `SQLDumpExportTests.roundTrip` exports, re-imports into another schema and
+  compares `CHECKSUM TABLE`. It `USE`s the schema first so SHOW CREATE leaves names unqualified.
 - **CSV import** runs on a fresh `MySQLSession` (the tab keeps its password in memory for this), never the query
   session, so the editor stays usable. `CSV.parse` returns `nil` for unquoted empty / `\N` fields so NULL and ''
   survive a round trip with `ResultExport.csv`.
@@ -107,7 +118,10 @@ Also `SQPRO_OPEN_TEMP=root@localhost:3306` (throwaway connection, never saved), 
 `SQPRO_SAVED_QUERIES=1|save`, `SQPRO_BOTTOM=history`, `SQPRO_SCHEMAS=drop:a,b` (select schemas, open the Drop /
 `alter:` sheet; `SQPRO_SCHEMAS_RUN=1` runs it, scratch databases only), `SQPRO_DROP_SQL` (kill the query connection,
 then run SQL: tests reconnect),
-`SQPRO_IMPORT=schema.table:/file.csv` (+ `SQPRO_IMPORT_RUN=1`, `SQPRO_IMPORT_DUPLICATES=skip`; scratch databases only).
+`SQPRO_IMPORT=schema.table:/file.csv` (+ `SQPRO_IMPORT_RUN=1`, `SQPRO_IMPORT_DUPLICATES=skip`; scratch databases only),
+`SQPRO_TABLES=drop:schema` / `truncate:schema.a,b` (+ `SQPRO_TABLES_RUN=1`), `SQPRO_DUMP=schema:/file.sql`
+(+ `SQPRO_DUMP_MODE=data_only`, `SQPRO_DUMP_RUN=1`), `SQPRO_EXPORT=schema` (sheet) or `schema:/out.sql` (runs;
+`SQPRO_EXPORT_CONTENT=data_only`); all scratch databases only.
 Temp connections write history files under a random id; delete them after testing.
 Other windows (popovers, the autocomplete list) are saved next to it as `out-1.png` …. The capture uses
 `cacheDisplay`, so glass, translucent materials and list separators don't appear as on screen. Don't `pkill` the

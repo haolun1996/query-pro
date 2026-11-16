@@ -85,6 +85,11 @@ One level only. A group exists while at least one connection is in it.
 ## 7. MCP server
 - Runs inside the app on `127.0.0.1` (HTTP transport), toggle in Settings, bearer token.
 - Tools: `list_connections` (no passwords), `list_databases`, `list_tables`, `describe_table`, `run_query` (SELECT), `execute` (writes, only if allowed).
+- `export_sql` (any connection AI can see): a database to an absolute `.sql` path, `structure_and_data` /
+  `structure_only` / `data_only`, optional table list; never replaces a file without `overwrite: true`.
+- Write tools, same rules as `execute`: `drop_tables` / `truncate_tables` (named tables, or every table of a database;
+  not system databases) and `import_sql` (a `.sql` dump from an absolute path or as text, `structure_and_data` or
+  `data_only`). Production approval shows the SQL, or for imports a summary (statements, CREATE TABLEs, rows).
 - Read-only by default per connection. Writes on red connections need confirmation in the app.
 - Results capped (e.g. 500 rows). AI activity log panel.
 
@@ -130,6 +135,26 @@ One level only. A group exists while at least one connection is in it.
   holds). Both show the SQL first and run it on the query session, logged and in History; it stops at the first error
   (DDL can't be rolled back). Drop has no default button, is disabled for `mysql`, `sys`, `information_schema` and
   `performance_schema`, and red connections ask once more.
+- **Drop / truncate tables**: right-click a schema → Truncate All Tables… / Drop All Tables…; right-click one table or
+  several of one schema → Truncate / Drop N Tables…. Lists the tables with row estimates and the SQL (one statement
+  per table, between `SET FOREIGN_KEY_CHECKS = 0` / `= 1`, so tables that reference each other go too; checks are
+  turned back on if one fails). Views and routines stay. Runs on the query session with progress in the sheet (not
+  Action Output); History gets the script as one entry. Red
+  button, no default button, red connections ask once more. Not offered for system schemas.
+- **Import SQL dump** (right-click a schema → Import SQL Dump…, or File › Import SQL Dump…): a `.sql` file, split
+  like the `mysql` client does (`DELIMITER`, `/*! … */` executable comments, strings, comments). **Tables and data**
+  runs every statement and stops at the first error (DDL can't be rolled back). **Data only** runs just INSERT /
+  REPLACE / UPDATE / DELETE plus SET / USE into existing tables, in one transaction that rolls back on any error.
+  Target schema is `USE`d first; a `USE` in the file wins (the sheet warns). Foreign key checks off; own connection
+  with progress and Stop in the sheet; error names the file line. Data only: the tables' triggers fire. Imports
+  (SQL and CSV) and exports report in their sheet, not Action Output; imports add one History entry.
+- **Export SQL dump** (right-click a schema → Export SQL Dump…, a table selection → Export N Tables as SQL Dump…,
+  or File › Export SQL Dump…): **Tables and data**, **Tables only** or **Data only**, with a table checklist. Every
+  table also exports views (ordered so views using views come later), procedures and functions; triggers follow
+  their table. DEFINERs are dropped and objects aren't schema-qualified, so the dump imports into any schema name.
+  mysqldump-style header (utf8mb4, UTC time zone, FK / unique checks off, `NO_AUTO_VALUE_ON_ZERO`), extended INSERTs
+  under 1 MB, generated columns left out. Own connection, one `WITH CONSISTENT SNAPSHOT, READ ONLY` transaction,
+  pages by primary key; written to a temporary file and moved into place, so Stop or an error leaves no file.
 
 ## Build order
 1. ✅ Driver check (`sqcheck`)
@@ -142,3 +167,5 @@ One level only. A group exists while at least one connection is in it.
 8. ✅ Phase 3: reconnect, query history, CSV import, local server start/stop
 9. ✅ Keyword autocorrect
 10. ✅ Multi-select in the schema tree, Alter / Drop schemas
+11. ✅ Drop / truncate tables, import SQL dump (tables and data, or data only); MCP tools for both
+12. ✅ Export SQL dump (tables and data / tables only / data only); MCP `export_sql`

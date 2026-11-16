@@ -43,6 +43,10 @@ struct QueryCommands: Commands {
                 .disabled(tab == nil)
             Button("Import CSV into Table…") { importCSV() }
                 .disabled(selectedTable == nil)
+            Button("Import SQL Dump…") { tab?.importSQLDump(into: tab?.sidebarSelection.first?.schema) }
+                .disabled(tab == nil)
+            Button("Export SQL Dump…") { if let tab, let schema = exportSchema { tab.exportSQLDump(of: schema) } }
+                .disabled(exportSchema == nil)
         }
         CommandMenu("Query") {
             Button("Execute Current Statement") { tab?.run(.current) }
@@ -65,6 +69,11 @@ struct QueryCommands: Commands {
                 .keyboardShortcut(.escape, modifiers: .option)
                 .disabled(tab?.selectedQuery?.editor == nil)
         }
+    }
+
+    /// The schema of what's selected in the tree, else the current schema.
+    private var exportSchema: String? {
+        tab?.sidebarSelection.first?.schema ?? tab?.currentSchema
     }
 
     /// The table selected in the schema tree, for Import CSV.

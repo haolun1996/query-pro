@@ -101,6 +101,12 @@ struct SchemaSidebar: View {
             Divider()
             Button("Copy Names") { copy(names.joined(separator: ", ")) }
             Button("Send to SQL Editor") { sendToEditor(names) }
+        } else if let selection = tablesInOneSchema(items) {
+            tableChangeButtons(selection.schema, selection.tables)
+            Divider()
+            let sorted = selection.tables.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            Button("Copy Names") { copy(sorted.joined(separator: ", ")) }
+            Button("Send to SQL Editor") { sendToEditor(sorted) }
         } else if !items.isEmpty {
             let sorted = items.map(\.name).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
             Button("Copy Names") { copy(sorted.joined(separator: ", ")) }
@@ -117,6 +123,27 @@ struct SchemaSidebar: View {
             .disabled(names.contains(where: SchemaScript.isSystem))
     }
 
+    /// Several tables (no views) of the same schema, for Drop / Truncate N Tables….
+    private func tablesInOneSchema(_ items: Set<SchemaSelection>) -> (schema: String, tables: [String])? {
+        var schema: String?
+        var tables: [String] = []
+        for item in items {
+            guard case .table(let s, let t) = item, schema == nil || schema == s, tab.tableNode(s, t)?.isView == false else { return nil }
+            schema = s
+            tables.append(t)
+        }
+        return schema.map { (schema: $0, tables: tables) }
+    }
+
+    @ViewBuilder
+    private func tableChangeButtons(_ schema: String, _ tables: [String]) -> some View {
+        let noun = tables.count == 1 ? "Table" : "\(tables.count) Tables"
+        Button("Export \(noun) as SQL Dump…") { tab.exportSQLDump(of: schema, tables: tables) }
+        Divider()
+        Button("Truncate \(noun)…") { tab.truncateTables(in: schema, tables) }
+        Button("Drop \(noun)…") { tab.dropTables(in: schema, tables) }
+    }
+
     @ViewBuilder
     private func menu(for item: SchemaSelection) -> some View {
         switch item {
@@ -127,6 +154,16 @@ struct SchemaSidebar: View {
             }
             Divider()
             schemaChangeButtons([name])
+            Divider()
+            Group {
+                Button("Truncate All Tables…") { tab.truncateTables(in: name) }
+                Button("Drop All Tables…") { tab.dropTables(in: name) }
+            }
+            .disabled(SchemaScript.isSystem(name))
+            Divider()
+            Button("Export SQL Dump…") { tab.exportSQLDump(of: name) }
+            Button("Import SQL Dump…") { tab.importSQLDump(into: name) }
+                .disabled(SchemaScript.isSystem(name))
         case .table(let schema, let table):
             Button(tab.rowLimit.map { "Select Rows - Limit \($0)" } ?? "Select Rows") { open(item) }
             Button("Table Info") {
@@ -136,6 +173,8 @@ struct SchemaSidebar: View {
             }
             if let schemaNode = tab.schemaNode(schema), let tableNode = tab.tableNode(schema, table), !tableNode.isView {
                 Button("Import CSV…") { tab.importCSV(into: tableNode, in: schemaNode) }
+                Divider()
+                tableChangeButtons(schema, [table])
             }
         case .routine:
             EmptyView()

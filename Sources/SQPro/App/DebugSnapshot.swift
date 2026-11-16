@@ -18,6 +18,12 @@ import SQCore
 ///                                     SQPRO_IMPORT_DUPLICATES=stop|skip|replace)
 ///     SQPRO_SCHEMAS=drop:a,b          select these schemas and open the Drop (or alter:a,b Alter) sheet
 ///     SQPRO_SCHEMAS_RUN=1             …instead run its SQL (alter: latin1) and print the outcome (scratch databases only!)
+///     SQPRO_TABLES=drop:schema        open the Drop All Tables sheet (truncate:schema, or schema.a,b for those tables)
+///     SQPRO_TABLES_RUN=1              …instead run its SQL and print the outcome (scratch databases only!)
+///     SQPRO_DUMP=schema:/path.sql     open the SQL dump import sheet (SQPRO_DUMP_MODE=data_only; SQPRO_DUMP_RUN=1 runs it
+///                                     and prints the outcome; scratch databases only)
+///     SQPRO_EXPORT=schema             open the SQL dump export sheet (=schema:/path.sql runs it and prints the outcome;
+///                                     SQPRO_EXPORT_CONTENT=data_only|structure_only)
 ///     SQPRO_TABLE_INFO=pos.admins     open that table's info tab
 ///     SQPRO_TABLE_SECTION=Indexes     …on this section
 ///     SQPRO_TYPE="select * from ad"   type this into the editor key by key (autocomplete opens) and print the list;
@@ -130,6 +136,56 @@ enum DebugSnapshot {
                     tab.dropSchemas(names)
                 } else {
                     tab.alterSchemas(names)
+                }
+            }
+            if let spec = environment["SQPRO_TABLES"], let colon = spec.firstIndex(of: ":"), let tab = workspace.selectedTab {
+                for _ in 0..<50 where !isConnected(tab) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                let target = spec[spec.index(after: colon)...].split(separator: ".", maxSplits: 1).map(String.init)
+                let schema = target.first ?? ""
+                let tables = target.count > 1 ? target[1].split(separator: ",").map(String.init) : nil
+                let isDrop = spec.hasPrefix("drop")
+                if environment["SQPRO_TABLES_RUN"] != nil {
+                    var names = tables ?? []
+                    if tables == nil { names = await tab.baseTables(of: schema).map(\.name) }
+                    let statements = isDrop ? SchemaScript.dropTables(names, in: schema) : SchemaScript.truncateTables(names, in: schema)
+                    print("TABLES RUN: \(await tab.runTableScript(statements, in: schema) ?? "ok")")
+                    print("TABLES LEFT: \((await tab.baseTables(of: schema)).map { "\($0.name)(\($0.rows ?? -1))" }), log: \(tab.log.map(\.action))")
+                } else if isDrop {
+                    tab.dropTables(in: schema, tables)
+                } else {
+                    tab.truncateTables(in: schema, tables)
+                }
+            }
+            if let spec = environment["SQPRO_DUMP"], let colon = spec.firstIndex(of: ":"), let tab = workspace.selectedTab {
+                for _ in 0..<50 where !isConnected(tab) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                let url = URL(fileURLWithPath: String(spec[spec.index(after: colon)...]))
+                await tab.openDumpImport(of: url, into: String(spec[..<colon]))
+                if let job = tab.dumpImport {
+                    if let mode = environment["SQPRO_DUMP_MODE"].flatMap(SQLDump.Mode.init(rawValue:)) { job.mode = mode }
+                    print("DUMP PLAN: \(job.plan.statements.count) statement(s), \(job.plan.skipped) skipped, problem: \(job.problem ?? "none")")
+                    if environment["SQPRO_DUMP_RUN"] != nil {
+                        await tab.runDumpImport(job)
+                        print("DUMP: \(job.phase), log: \(tab.log.map(\.action))")
+                    }
+                }
+            }
+            if let spec = environment["SQPRO_EXPORT"], let tab = workspace.selectedTab {
+                for _ in 0..<50 where !isConnected(tab) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
+                tab.exportSQLDump(of: parts[0])
+                if let job = tab.dumpExport {
+                    if let content = environment["SQPRO_EXPORT_CONTENT"].flatMap(SQLDumpExport.Content.init(rawValue:)) { job.content = content }
+                    if parts.count > 1 {
+                        await job.load(from: tab)
+                        await tab.runDumpExport(job, to: URL(fileURLWithPath: parts[1]))
+                        print("EXPORT: \(job.phase), log: \(tab.log.map(\.action))")
+                    }
                 }
             }
             if let target = environment["SQPRO_TABLE_INFO"], let tab = workspace.selectedTab {

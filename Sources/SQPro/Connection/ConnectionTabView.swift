@@ -48,6 +48,17 @@ struct ConnectionTabView: View {
         .sheet(item: $tab.schemaChange) { change in
             SchemaChangeSheet(tab: tab, change: change)
         }
+        .sheet(item: $tab.tableChange) { change in
+            TableChangeSheet(tab: tab, change: change)
+        }
+        .sheet(item: $tab.dumpExport) { job in
+            SQLExportSheet(tab: tab, job: job)
+                .interactiveDismissDisabled(job.isRunning)
+        }
+        .sheet(item: $tab.dumpImport) { job in
+            SQLImportSheet(tab: tab, job: job)
+                .interactiveDismissDisabled(job.isRunning)
+        }
         .sheet(item: $tab.importJob) { job in
             CSVImportSheet(tab: tab, job: job)
                 // Closing mid-import would hide the progress; Stop first.

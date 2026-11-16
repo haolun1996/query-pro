@@ -32,7 +32,7 @@ public struct MCPActivity: Identifiable, Sendable {
 }
 
 /// The MCP tools for one saved connection: connection_info, list_databases, list_tables, describe_table,
-/// run_query, execute. Every call opens its own short-lived MySQL connection, so AI calls never touch the
+/// run_query, export_sql, and the writes execute, drop_tables, truncate_tables and import_sql. Every call opens its own short-lived MySQL connection, so AI calls never touch the
 /// user's open tabs.
 public struct SQLTools: Sendable {
     public static let defaultRowCap = 200
@@ -53,8 +53,9 @@ public struct SQLTools: Sendable {
             version: version,
             instructions: """
                 Access to one MySQL connection the user saved in Query Pro. Start with connection_info, then \
-                list_databases / list_tables / describe_table to learn the schema before querying. run_query is \
-                read-only; execute is for writes and only works if the user allowed writes for this connection.
+                list_databases / list_tables / describe_table to learn the schema before querying. run_query and \
+                export_sql only read. execute, drop_tables, truncate_tables and import_sql change things and only work if the user \
+                allowed writes for this connection.
                 """,
             capabilities: .init(tools: .init(listChanged: false))
         )
@@ -128,9 +129,83 @@ public struct SQLTools: Sendable {
             ),
             annotations: .init(readOnlyHint: false, destructiveHint: true)
         ),
+        Tool(
+            name: "export_sql",
+            description: """
+                Export a database to a .sql dump file on this Mac, like mysqldump: content structure_and_data, structure_only or \
+                data_only, for every table or the ones named in tables. With structure and every table, views, routines and \
+                triggers are included (include_objects false leaves them out). Read from one consistent snapshot. The file \
+                imports back with import_sql (or the mysql client), into a database of any name. An existing file is only \
+                replaced with overwrite true.
+                """,
+            inputSchema: schema(
+                [
+                    "database": databaseProperty,
+                    "content": .object([
+                        "type": "string", "enum": .array(SQLDumpExport.Content.allCases.map { .string($0.rawValue) }),
+                        "description": "structure_and_data, structure_only or data_only",
+                    ]),
+                    "path": .object(["type": "string", "description": "Absolute path of the .sql file to write"]),
+                    "tables": tablesProperty,
+                    "include_objects": .object(["type": "boolean", "description": "Views, routines and triggers (default true)"]),
+                    "overwrite": .object(["type": "boolean", "description": "Replace the file if it exists (default false)"]),
+                ],
+                required: ["database", "content", "path"]
+            ),
+            annotations: .init(readOnlyHint: true)
+        ),
+        Tool(
+            name: "drop_tables",
+            description: """
+                Drop tables of a database: the ones named in tables, or every table when tables is left out. Views and \
+                routines stay. Foreign key checks are off while dropping. Needs read_write access; production connections \
+                ask the user first.
+                """,
+            inputSchema: schema(["database": databaseProperty, "tables": tablesProperty], required: ["database"]),
+            annotations: .init(readOnlyHint: false, destructiveHint: true)
+        ),
+        Tool(
+            name: "truncate_tables",
+            description: """
+                Delete every row of tables of a database (TRUNCATE: AUTO_INCREMENT restarts), keeping the tables: the ones \
+                named in tables, or every table when tables is left out. Needs read_write access; production connections \
+                ask the user first.
+                """,
+            inputSchema: schema(["database": databaseProperty, "tables": tablesProperty], required: ["database"]),
+            annotations: .init(readOnlyHint: false, destructiveHint: true)
+        ),
+        Tool(
+            name: "import_sql",
+            description: """
+                Import a SQL dump (e.g. from mysqldump) into a database, from a local .sql file (path) or from text (sql). \
+                mode structure_and_data runs every statement: tables are created (or replaced, if the dump drops them) and \
+                filled; it stops at the first error and DDL already run stays. mode data_only runs only INSERT / REPLACE / \
+                UPDATE / DELETE (and SET / USE) into existing tables (their triggers fire), in one transaction that rolls back on \
+                any error. \
+                Foreign key checks are off during the import. A USE in the dump wins over database. Needs read_write \
+                access; production connections ask the user first.
+                """,
+            inputSchema: schema(
+                [
+                    "database": .object(["type": "string", "description": "Database to import into (optional if the dump has its own USE)"]),
+                    "mode": .object([
+                        "type": "string", "enum": .array(SQLDump.Mode.allCases.map { .string($0.rawValue) }),
+                        "description": "structure_and_data (tables and rows) or data_only (rows into existing tables)",
+                    ]),
+                    "path": .object(["type": "string", "description": "Absolute path of a .sql file on this Mac"]),
+                    "sql": .object(["type": "string", "description": "The dump's text, instead of path"]),
+                ],
+                required: ["mode"]
+            ),
+            annotations: .init(readOnlyHint: false, destructiveHint: true)
+        ),
     ]
 
     private static let databaseProperty: Value = .object(["type": "string", "description": "Database (schema) name"])
+    private static let tablesProperty: Value = .object([
+        "type": "array", "items": .object(["type": "string"]),
+        "description": "Table names; leave out for every table in the database",
+    ])
 
     private static func schema(_ properties: [String: Value], required: [String] = []) -> Value {
         .object([
@@ -146,7 +221,7 @@ public struct SQLTools: Sendable {
         let clock = ContinuousClock()
         let start = clock.now
         let connection = await provider.profiles().first { $0.id == connectionID }?.name
-        let sql = arguments["sql"]?.stringValue
+        let sql = Self.loggedSQL(tool, arguments)
         do {
             let (text, summary) = try await perform(tool, arguments: arguments)
             await provider.record(MCPActivity(tool: tool, connectionID: connectionID, connection: connection, sql: sql, outcome: .success(summary), duration: clock.now - start))
@@ -280,12 +355,7 @@ public struct SQLTools: Sendable {
         case "execute":
             let profile = try await profile(arguments)
             let sql = try required("sql", arguments)
-            guard profile.mcpAccess == .readWrite else {
-                throw ToolError(
-                    "\(profile.name) is read-only for AI. The user can allow writes in Query Pro: Edit Connection › AI access.",
-                    isBlock: true
-                )
-            }
+            try requireWrites(profile)
             let statements = SQL.statements(in: sql)
             guard statements.count == 1, let statement = statements.first?.text else {
                 throw ToolError("execute runs exactly one statement; send them one at a time.", isBlock: true)
@@ -300,6 +370,110 @@ public struct SQLTools: Sendable {
             if result.hasResultSet { output["rows_returned"] = result.rows.count }
             return (try json(output), result.summary)
 
+        case "export_sql":
+            let profile = try await profile(arguments)
+            let database = try required("database", arguments)
+            guard let content = arguments["content"]?.stringValue.flatMap(SQLDumpExport.Content.init(rawValue:)) else {
+                throw ToolError("content must be structure_and_data, structure_only or data_only.")
+            }
+            let url = try dumpURL(try required("path", arguments))
+            guard arguments["overwrite"]?.boolValue == true || !FileManager.default.fileExists(atPath: url.path) else {
+                throw ToolError("\(url.path) already exists. Pass overwrite true to replace it.", isBlock: true)
+            }
+            var options = SQLDumpExport.Options(content: content, tables: arguments["tables"]?.arrayValue?.compactMap(\.stringValue))
+            options.includesObjects = arguments["include_objects"]?.boolValue ?? true
+            let session = try await open(profile, database: nil)
+            defer { Task { await session.close() } }
+            let outcome: SQLDumpExport.Outcome
+            do {
+                outcome = try await SQLDumpExport.run(schema: database, options: options, on: session, to: url, server: profile.address)
+            } catch let error as SQLDumpExport.ExportError {
+                throw ToolError(error.message)
+            }
+            let output: [String: Any] = [
+                "path": url.path, "tables": outcome.tables, "views": outcome.views, "routines": outcome.routines,
+                "triggers": outcome.triggers, "rows": outcome.rows, "bytes": outcome.bytes,
+            ]
+            return (try json(output), "Exported \(database) (\(content.title)) to \(url.lastPathComponent): \(outcome.summary)")
+
+        case "drop_tables", "truncate_tables":
+            let profile = try await profile(arguments)
+            let database = try required("database", arguments)
+            try requireWrites(profile)
+            guard !SchemaScript.isSystem(database) else {
+                throw ToolError("\(database) is a system database; its tables can't be dropped or emptied here.", isBlock: true)
+            }
+            let isDrop = tool == "drop_tables"
+            let session = try await open(profile, database: nil)
+            defer { Task { await session.close() } }
+            let existing = try await session.execute(SchemaScript.tablesQuery(database)).rows.compactMap { $0.first ?? nil }
+            var tables = existing
+            if let named = arguments["tables"]?.arrayValue {
+                tables = named.compactMap(\.stringValue)
+                let unknown = tables.filter { !existing.contains($0) }
+                guard unknown.isEmpty else {
+                    throw ToolError("No table \(unknown.joined(separator: ", ")) in \(database). Views can't be dropped or emptied with this tool.")
+                }
+            }
+            guard !tables.isEmpty else { throw ToolError("\(database) has no tables.") }
+            let statements = isDrop ? SchemaScript.dropTables(tables, in: database) : SchemaScript.truncateTables(tables, in: database)
+            let what = tables == existing ? "all \(tables.count) table(s) in \(database)" : "\(tables.count) table(s) in \(database)"
+            if profile.color.isProduction, !(await provider.approveWrite(SchemaScript.text(statements), on: profile)) {
+                throw ToolError("The user declined to \(isDrop ? "drop" : "empty") \(what) on production connection \(profile.name).", isBlock: true)
+            }
+            var done: [String] = []
+            for (index, statement) in statements.enumerated() {
+                do {
+                    _ = try await session.execute(statement)
+                } catch {
+                    let table = index > 0 && index <= tables.count ? tables[index - 1] : nil
+                    throw ToolError("""
+                        \(ErrorText.message(for: error))\(table.map { " (table \($0))" } ?? "").\
+                        \(done.isEmpty ? "" : " Already \(isDrop ? "dropped" : "emptied"): \(done.joined(separator: ", ")).")
+                        """)
+                }
+                if index > 0, index <= tables.count { done.append(tables[index - 1]) }
+            }
+            let output: [String: Any] = [isDrop ? "dropped" : "truncated": done]
+            return (try json(output), "\(isDrop ? "Dropped" : "Emptied") \(what)")
+
+        case "import_sql":
+            let profile = try await profile(arguments)
+            try requireWrites(profile)
+            guard let mode = arguments["mode"]?.stringValue.flatMap(SQLDump.Mode.init(rawValue:)) else {
+                throw ToolError("mode must be structure_and_data or data_only.")
+            }
+            let (text, source) = try readDump(arguments)
+            let database = arguments["database"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let plan = SQLDump.plan(SQLDump.statements(in: text), mode: mode)
+            guard !plan.statements.isEmpty else {
+                throw ToolError(mode == .dataOnly && plan.skipped > 0
+                    ? "The dump has no data statements (INSERT, REPLACE, UPDATE, DELETE) to import."
+                    : "The dump has no statements.")
+            }
+            let target = database.isEmpty ? "" : " into \(database)"
+            let description = "Import \(source) (\(mode == .dataOnly ? "data only" : "structure and data"))\(target): "
+                + "\(plan.statements.count) statement(s), \(plan.tablesCreated) CREATE TABLE, \(plan.dataStatements) data statement(s)"
+                + (plan.schemasNamed.isEmpty ? "" : "; the dump itself switches to \(plan.schemasNamed.joined(separator: ", "))")
+            if profile.color.isProduction, !(await provider.approveWrite(description, on: profile)) {
+                throw ToolError("The user declined this import on production connection \(profile.name).", isBlock: true)
+            }
+            let session = try await open(profile, database: nil)
+            defer { Task { await session.close() } }
+            let outcome: SQLDumpImport.Outcome
+            do {
+                outcome = try await SQLDumpImport.run(plan, mode: mode, schema: database, on: session)
+            } catch let failure as SQLDumpImport.Failure {
+                throw ToolError(failure.errorDescription ?? failure.message)
+            }
+            let output: [String: Any] = [
+                "statements_run": outcome.statements,
+                "skipped": plan.skipped,
+                "tables_created": plan.tablesCreated,
+                "affected_rows": outcome.affectedRows,
+            ]
+            return (try json(output), "\(outcome.statements) statement(s), \(outcome.affectedRows) row(s) affected")
+
         default:
             throw ToolError("Unknown tool \(tool).")
         }
@@ -313,6 +487,66 @@ public struct SQLTools: Sendable {
             throw ToolError("This connection is no longer available to AI clients in Query Pro.", isBlock: true)
         }
         return profile
+    }
+
+    private func requireWrites(_ profile: ConnectionProfile) throws {
+        guard profile.mcpAccess == .readWrite else {
+            throw ToolError(
+                "\(profile.name) is read-only for AI. The user can allow writes in Query Pro: Edit Connection › AI access.",
+                isBlock: true
+            )
+        }
+    }
+
+    /// The dump's text and how to name it. A path must be an absolute `.sql` file, so the tool can't be
+    /// pointed at arbitrary files.
+    private func readDump(_ arguments: [String: Value]) throws -> (text: String, source: String) {
+        let path = arguments["path"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+        let sql = arguments["sql"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+        switch (path, sql) {
+        case (let path?, nil):
+            let url = try dumpURL(path)
+            do {
+                return (try CSV.read(url), url.lastPathComponent)
+            } catch {
+                throw ToolError("Can't read \(url.path): \(error.localizedDescription)")
+            }
+        case (nil, let sql?):
+            return (sql, "SQL text")
+        default:
+            throw ToolError("Give path or sql: one of them.")
+        }
+    }
+
+    /// Dumps are read from and written to absolute `.sql` paths only, so the tools can't touch other files.
+    private func dumpURL(_ path: String) throws -> URL {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
+        guard path.hasPrefix("/") || path.hasPrefix("~"), url.pathExtension.lowercased() == "sql" else {
+            throw ToolError("path must be the absolute path of a .sql file.", isBlock: true)
+        }
+        return url
+    }
+
+    /// What the activity log shows as the SQL: dumps are summarised, not copied in.
+    static func loggedSQL(_ tool: String, _ arguments: [String: Value]) -> String? {
+        switch tool {
+        case "drop_tables", "truncate_tables":
+            let database = arguments["database"]?.stringValue ?? ""
+            let tables = arguments["tables"]?.arrayValue?.compactMap(\.stringValue)
+            let list = tables.map { $0.map(SQL.quoteIdentifier).joined(separator: ", ") } ?? "all tables"
+            return "\(tool == "drop_tables" ? "DROP" : "TRUNCATE") TABLE \(list) in \(SQL.quoteIdentifier(database))"
+        case "export_sql":
+            let content = arguments["content"]?.stringValue ?? ""
+            let database = arguments["database"]?.stringValue ?? ""
+            return "-- Export \(SQL.quoteIdentifier(database)) (\(content)) to \(arguments["path"]?.stringValue ?? "?")"
+        case "import_sql":
+            let mode = arguments["mode"]?.stringValue ?? ""
+            let source = arguments["path"]?.stringValue ?? "\(arguments["sql"]?.stringValue?.count ?? 0) characters of SQL"
+            let database = arguments["database"]?.stringValue.map { " into \(SQL.quoteIdentifier($0))" } ?? ""
+            return "-- Import \(source) (\(mode))\(database)"
+        default:
+            return arguments["sql"]?.stringValue
+        }
     }
 
     private func required(_ key: String, _ arguments: [String: Value]) throws -> String {

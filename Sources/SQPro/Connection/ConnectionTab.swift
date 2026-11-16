@@ -39,6 +39,8 @@ final class ConnectionTab: Identifiable {
     var sidebarFilter = ""
     /// The Alter / Drop Schemas sheet.
     var schemaChange: SchemaChange?
+    /// The Drop / Truncate Tables sheet.
+    var tableChange: TableChange?
 
     /// The one selected object; `nil` when nothing or several are selected.
     var selectedObject: SchemaSelection? {
@@ -81,6 +83,10 @@ final class ConnectionTab: Identifiable {
 
     /// The CSV import sheet.
     var importJob: CSVImportJob?
+    /// The SQL dump import sheet.
+    var dumpImport: SQLImportJob?
+    /// The SQL dump export sheet.
+    var dumpExport: SQLExportJob?
 
     // Autocomplete: tables and columns per schema, loaded on first use and dropped when the schema list reloads.
     @ObservationIgnored private var completionTables: [String: [CompletionCatalog.Table]] = [:]
@@ -598,6 +604,156 @@ final class ConnectionTab: Identifiable {
         await execute(statements, applyLimit: false, document: nil, recordsHistory: true)
     }
 
+    // MARK: Drop / truncate tables
+
+    /// `tables` `nil` means every table in the schema, as it is when the sheet opens.
+    func dropTables(in schema: String, _ tables: [String]? = nil) {
+        guard !SchemaScript.isSystem(schema) else { return }
+        tableChange = TableChange(kind: .drop, schema: schema, tables: tables)
+    }
+
+    func truncateTables(in schema: String, _ tables: [String]? = nil) {
+        guard !SchemaScript.isSystem(schema) else { return }
+        tableChange = TableChange(kind: .truncate, schema: schema, tables: tables)
+    }
+
+    /// A schema's base tables with InnoDB's row estimate, for the Drop / Truncate sheet.
+    func baseTables(of schema: String) async -> [(name: String, rows: Int?)] {
+        guard let metaSession else { return [] }
+        do {
+            return try await metaSession.execute(SchemaScript.tablesQuery(schema)).rows.compactMap { row in
+                row[0].map { (name: $0, rows: row[1].flatMap { Int($0) }) }
+            }
+        } catch {
+            appendLog(action: "Load tables of \(schema)", response: ErrorText.message(for: error), status: .error)
+            return []
+        }
+    }
+
+    /// Runs the Drop / Truncate Tables script on the query session. Progress goes to the sheet, not Action Output;
+    /// History gets the whole script as one entry. Turns foreign key checks back on if a statement between the
+    /// `SET FOREIGN_KEY_CHECKS` pair failed, so the query session isn't left without them.
+    func runTableScript(
+        _ statements: [String], in schema: String, progress: (_ done: Int, _ statement: String) -> Void = { _, _ in }
+    ) async -> String? {
+        guard let querySession else { return "Not connected." }
+        guard !isRunning else { return "Another query is still running." }
+        isRunning = true
+        defer { isRunning = false }
+        let clock = ContinuousClock()
+        let start = clock.now
+        var failure: String?
+        for (index, statement) in statements.enumerated() {
+            progress(index, statement)
+            do {
+                _ = try await querySession.execute(statement)
+            } catch {
+                failure = ErrorText.message(for: error)
+                break
+            }
+        }
+        progress(statements.count, "")
+        if failure != nil, statements.first == SchemaScript.foreignKeyChecksOff {
+            _ = try? await querySession.execute(SchemaScript.foreignKeyChecksOn)
+        }
+        let tables = statements.filter { $0 != SchemaScript.foreignKeyChecksOff && $0 != SchemaScript.foreignKeyChecksOn }.count
+        recordHistory(SchemaScript.text(statements), schema: schema, succeeded: failure == nil,
+                      response: failure ?? "\(tables) table(s)", duration: clock.now - start)
+        await noteReconnect()
+        await refreshCurrentSchema()
+        if statements.contains(where: Self.changesSchemaList) { try? await reloadSchemas() }
+        // Dropped tables leave the selection.
+        let names = Set((schemaNode(schema)?.tables ?? []).map(\.name))
+        sidebarSelection = sidebarSelection.filter { item in
+            guard case .table(let s, let t) = item, s == schema else { return true }
+            return names.contains(t) || tableNode(s, t)?.isView == true
+        }
+        return failure
+    }
+
+    // MARK: SQL dump import
+
+    /// Picks a `.sql` file and opens the import sheet, aimed at `schema` (or the current schema).
+    func importSQLDump(into schema: String?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "sql") ?? .plainText, .plainText]
+        panel.message = "Choose a SQL dump to import" + (schema.map { " into \($0)" } ?? "")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await openDumpImport(of: url, into: schema ?? currentSchema) }
+    }
+
+    func openDumpImport(of url: URL, into schema: String?) async {
+        do {
+            let statements = try await Task.detached { SQLDump.statements(in: try CSV.read(url)) }.value
+            let target = schema.flatMap { SchemaScript.isSystem($0) ? nil : $0 } ?? ""
+            dumpImport = SQLImportJob(fileURL: url, statements: statements, schema: target)
+        } catch {
+            appendLog(action: "Import \(url.lastPathComponent)", response: error.localizedDescription, status: .error)
+        }
+    }
+
+    /// Runs on its own connection, so the editor stays usable meanwhile.
+    func runDumpImport(_ job: SQLImportJob) async {
+        let plan = job.plan
+        let mode = job.mode
+        let target = job.schema
+        job.isCancelled = false
+        job.phase = .running(done: 0, total: plan.statements.count)
+        let into = target.isEmpty ? "" : " into \(target)"
+        let label = "Import \(job.fileURL.lastPathComponent) (\(mode == .dataOnly ? "data only" : "structure and data"))\(into)"
+        let clock = ContinuousClock()
+        let start = clock.now
+        let session = MySQLSession(profile: profile, password: password)
+        do {
+            try await session.connect()
+            let outcome = try await SQLDumpImport.run(
+                plan, mode: mode, schema: target, on: session,
+                progress: { done in await MainActor.run { job.phase = .running(done: done, total: plan.statements.count) } },
+                isCancelled: { await MainActor.run { job.isCancelled } }
+            )
+            var summary = "\(outcome.statements) statement(s) run, \(outcome.affectedRows) row(s) affected"
+            if plan.skipped > 0 { summary += ", \(plan.skipped) skipped" }
+            recordHistory("-- \(label)", schema: target.isEmpty ? currentSchema : target, succeeded: true, response: summary, duration: clock.now - start)
+            job.phase = .finished(summary)
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? ErrorText.message(for: error)
+            recordHistory("-- \(label)", schema: target.isEmpty ? currentSchema : target, succeeded: false,
+                          response: message.replacingOccurrences(of: "\n", with: " "), duration: clock.now - start)
+            job.phase = .failed(message)
+        }
+        await session.close()
+        // New tables (or schemas) show up in the tree.
+        if mode == .structureAndData { try? await reloadSchemas() }
+    }
+
+    // MARK: SQL dump export
+
+    /// Opens the export sheet for a schema, with `tables` (or every table) ticked.
+    func exportSQLDump(of schema: String, tables: [String]? = nil) {
+        dumpExport = SQLExportJob(schema: schema, preselected: tables)
+    }
+
+    /// Runs on its own connection inside one read-only snapshot, so the editor stays usable meanwhile.
+    func runDumpExport(_ job: SQLExportJob, to url: URL) async {
+        let options = job.options
+        job.isCancelled = false
+        job.phase = .running(table: "", done: 0, total: 0, rows: 0)
+        let session = MySQLSession(profile: profile, password: password)
+        do {
+            try await session.connect()
+            let outcome = try await SQLDumpExport.run(
+                schema: job.schema, options: options, on: session, to: url, server: profile.address,
+                progress: { p in await MainActor.run { job.phase = .running(table: p.table, done: p.tablesDone, total: p.tableCount, rows: p.rows) } },
+                isCancelled: { await MainActor.run { job.isCancelled } }
+            )
+            job.phase = .finished(outcome.summary, url)
+        } catch {
+            let message = error is CancellationError ? "Stopped. No file was written." : ErrorText.message(for: error)
+            job.phase = .failed(message)
+        }
+        await session.close()
+    }
+
     // MARK: Editing results
 
     /// A result is editable when all its table columns come from one table and include that table's primary key.
@@ -762,7 +918,6 @@ final class ConnectionTab: Identifiable {
         let rows = job.dataRows
         job.phase = .running(done: 0, total: rows.count)
         let session = MySQLSession(profile: profile, password: password)
-        let action = appendLog(action: "Import \(job.fileURL.lastPathComponent) into \(job.schema).\(job.table)", response: "Running…", status: .running)
         let clock = ContinuousClock()
         let start = clock.now
         var current = 0
@@ -786,7 +941,6 @@ final class ConnectionTab: Identifiable {
             let summary = plan.duplicates == .replace
                 ? "\(rows.count) row(s) imported (\(affected) affected, replaced rows count twice)"
                 : "\(affected) row(s) imported" + (affected < rows.count ? ", \(rows.count - Int(affected)) skipped as duplicates" : "")
-            updateLog(action, response: summary, status: .success, duration: clock.now - start)
             recordHistory("-- Imported \(job.fileURL.lastPathComponent) into \(SQL.quoteIdentifier(job.schema)).\(SQL.quoteIdentifier(job.table))",
                           schema: currentSchema, succeeded: true, response: summary, duration: clock.now - start)
             job.phase = .finished(summary)
@@ -795,7 +949,6 @@ final class ConnectionTab: Identifiable {
             let message = error is CancellationError
                 ? "Cancelled. Nothing was imported."
                 : "\(ErrorText.message(for: error))\nIn the batch starting at data row \(current + 1) (file line \(current + (job.hasHeader ? 2 : 1))). Nothing was imported."
-            updateLog(action, response: message.replacingOccurrences(of: "\n", with: " "), status: .error, duration: nil)
             job.phase = .failed(message)
         }
         await session.close()
@@ -982,6 +1135,19 @@ struct SchemaChange: Identifiable {
     let id = UUID()
     let kind: Kind
     let schemas: [String]
+}
+
+/// The Drop / Truncate Tables sheet's subject.
+struct TableChange: Identifiable {
+    enum Kind {
+        case drop, truncate
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let schema: String
+    /// `nil`: every table in the schema.
+    let tables: [String]?
 }
 
 struct ActionLogEntry: Identifiable {
