@@ -73,17 +73,24 @@ import Testing
         return try await session.execute("CHECKSUM TABLE \(q).parent, \(q).child, \(q).nopk, \(q).pairs").rows.map { $0[1] ?? "NULL" }
     }
 
+    /// Drops the scratch databases before returning, even when the test fails. (A `defer { Task { … } }` would
+    /// run too late: the test process can exit first and leave them behind.)
     @Test func roundTrip() async throws {
         let suffix = UInt32.random(in: 0...UInt32.max)
         let (source, copy) = ("sqpro_export_src_\(suffix)", "sqpro_export_copy_\(suffix)")
         guard let admin = await session() else { return }
-        defer {
-            Task {
-                _ = try? await admin.execute("DROP DATABASE IF EXISTS \(SQL.quoteIdentifier(source))")
-                _ = try? await admin.execute("DROP DATABASE IF EXISTS \(SQL.quoteIdentifier(copy))")
-                await admin.close()
-            }
+        var failure: (any Error)?
+        do {
+            try await roundTrip(admin: admin, source: source, copy: copy, suffix: suffix)
+        } catch {
+            failure = error
         }
+        for database in [source, copy] { _ = try? await admin.execute("DROP DATABASE IF EXISTS \(SQL.quoteIdentifier(database))") }
+        await admin.close()
+        if let failure { throw failure }
+    }
+
+    private func roundTrip(admin: MySQLSession, source: String, copy: String, suffix: UInt32) async throws {
         _ = try await admin.execute("CREATE DATABASE \(SQL.quoteIdentifier(source))")
         _ = try await admin.execute("CREATE DATABASE \(SQL.quoteIdentifier(copy))")
         let setup = try #require(await session(source))

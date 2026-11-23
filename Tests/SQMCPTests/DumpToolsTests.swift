@@ -51,11 +51,23 @@ private struct RootProvider: MCPProvider {
         }
     }
 
+    /// Drops the scratch database before returning, even when the test fails.
     @Test func importTruncateReimportDrop() async throws {
         guard let admin = await admin() else { return }
         let database = "sqpro_dump_test_\(UInt32.random(in: 0...UInt32.max))"
-        _ = try await admin.execute("CREATE DATABASE \(SQL.quoteIdentifier(database))")
-        defer { Task { _ = try? await admin.execute("DROP DATABASE \(SQL.quoteIdentifier(database))"); await admin.close() } }
+        var failure: (any Error)?
+        do {
+            _ = try await admin.execute("CREATE DATABASE \(SQL.quoteIdentifier(database))")
+            try await importTruncateReimportDrop(admin: admin, database: database)
+        } catch {
+            failure = error
+        }
+        _ = try? await admin.execute("DROP DATABASE IF EXISTS \(SQL.quoteIdentifier(database))")
+        await admin.close()
+        if let failure { throw failure }
+    }
+
+    private func importTruncateReimportDrop(admin: MySQLSession, database: String) async throws {
         let tools = SQLTools(provider: RootProvider(saved: [profile]), connection: profile.id)
         func count(_ table: String) async throws -> String? {
             try await admin.execute("SELECT COUNT(*) FROM \(SQL.quoteIdentifier(database)).\(SQL.quoteIdentifier(table))").rows.first?.first ?? nil
