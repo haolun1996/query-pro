@@ -20,7 +20,8 @@ struct TabStrip: View {
             }
             .help("Home")
 
-            ForEach(workspace.tabs) { tab in
+            ForEach(workspace.tabs.map(TabRef.init)) { ref in
+                let tab = ref.tab
                 TabItem(isSelected: workspace.selection == tab.id, onClose: { workspace.close(tab) }) {
                     workspace.selection = tab.id
                 } label: {
@@ -59,6 +60,12 @@ struct TabStrip: View {
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
     }
+}
+
+/// `ForEach` needs `Identifiable` values; a key path on `any WorkspaceTab` crashes the Swift 6.4 compiler.
+private struct TabRef: Identifiable {
+    let tab: any WorkspaceTab
+    var id: UUID { tab.id }
 }
 
 extension TabStrip {

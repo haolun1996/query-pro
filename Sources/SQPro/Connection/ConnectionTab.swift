@@ -9,7 +9,7 @@ import SQCore
 /// It keeps two sessions: one runs the user's queries, the other loads the schema tree,
 /// so a slow query never blocks the sidebar.
 @Observable
-final class ConnectionTab: Identifiable {
+final class ConnectionTab: @MainActor WorkspaceTab {
     enum State {
         case connecting
         case connected
@@ -100,11 +100,7 @@ final class ConnectionTab: Identifiable {
         newQuery()
     }
 
-    /// "GROUP/Name", like Workbench's connection tabs.
-    var title: String {
-        guard let group = profile.groupName else { return profile.name }
-        return "\(group)/\(profile.name)"
-    }
+    var title: String { groupedTitle }
 
     var selectedQuery: QueryDocument? {
         queries.first { $0.id == selectedQueryID }

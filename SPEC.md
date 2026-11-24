@@ -3,9 +3,10 @@
 A native macOS MySQL client. Workbench-style layout, Liquid Glass look, only the features we use.
 
 - **Platform:** macOS 26+ only (Liquid Glass). No Windows, no iOS.
-- **Database:** MySQL only.
+- **Database:** MySQL, and Redis (key browser + console, see Phase 4).
 - **Stack:** SwiftUI shell, AppKit `NSTableView` for result grids, `MySQLNIO` driver (in `SQCore`).
-- **Out of scope:** SSH tunnel, AI chat, plugins, other databases, Workbench import.
+- **Out of scope:** SSH tunnel, AI chat, plugins, databases other than MySQL and Redis, Redis Cluster / Sentinel,
+  Workbench import.
 
 ## Layout
 
@@ -50,6 +51,11 @@ One level only. A group exists while at least one connection is in it.
 - Query editor on the right with tabs.
 - Toolbar: Run all, Run current, Stop, row limit, Beautify, Find, Invisibles, Wrap.
 - Statement under the cursor is highlighted.
+- **Remote connections** (any host but `localhost` / `127.0.0.1` / `::1`): the query editor and its gutter turn deep
+  red (a red wash in light mode), so a remote server is never mistaken for the local one.
+- Works with MySQL 8.x and 9.x (tested on 9.7.4): login is `caching_sha2_password`, the only method left in 9.x, with
+  or without TLS and with any password length (needs mysql-nio ≥ 1.9.3). 9.x `VECTOR` columns show as `0x…` hex like
+  other binary data, edit back as hex literals and export as hex.
 
 | Key | Action |
 |---|---|
@@ -156,6 +162,31 @@ One level only. A group exists while at least one connection is in it.
   under 1 MB, generated columns left out. Own connection, one `WITH CONSISTENT SNAPSHOT, READ ONLY` transaction,
   pages by primary key; written to a temporary file and moved into place, so Stop or an error leaves no file.
 
+## Phase 4: Redis
+- **Connections**: Add Connection has a MySQL / Redis switch. Redis: host, port (6379), username (empty = the
+  `default` user, password only; or an ACL user), password (Keychain, like MySQL), database number, **Use TLS**
+  (cloud services: ElastiCache with in-transit encryption, Redis Cloud, Upstash, Azure). TLS doesn't check
+  certificates, like MySQL's "use SSL if available". Single servers only (no Cluster, no Sentinel). Test Connection
+  shows the Redis version; a TLS mismatch says to turn TLS on or off. Home cards show a Redis tag.
+- **Key browser**: SCAN, never KEYS, 1000 keys at a time with Load More; keys grouped into folders by `:`, with type
+  badges and a clock for keys that expire. Filter box (plain text matches anywhere; `*` `?` `[` make it a pattern),
+  type filter (SCAN TYPE), database picker with key counts (`INFO keyspace`; `CONFIG GET databases` when allowed).
+- **Values**: string (text editor, Save keeps the TTL, Format JSON; binary shown escaped and read-only), hash, list,
+  set, sorted set, stream (tables, first 1000 items, add / edit / delete; stream entries add / delete only). Header
+  shows type, size, TTL (set / remove), rename (RENAMENX, never replaces), reload, delete (UNLINK, asks first).
+  On red connections every change asks once more.
+- **Console** (bottom panel, with AI Activity): redis-cli syntax and output, `host:port[db]>` prompt, ↑ ↓ history,
+  `clear`, Stop for a command that waits (closes and reopens the console's own connection). SUBSCRIBE / MONITOR are
+  refused. Red connections ask before FLUSHALL, FLUSHDB, KEYS, SHUTDOWN, CONFIG SET, ACL changes …. Deep red on
+  remote hosts, like the SQL editor.
+- Two connections per tab (browser, console), so a blocking console command never freezes the key list; both
+  reconnect after drops (ping after 30 s idle) and select their database again.
+- **MCP**: each Redis connection is its own MCP server, like MySQL ones: `connection_info`, `server_info`,
+  `scan_keys`, `get_key`, `run_command` (read-only commands only) and `execute_command` (writes; needs Read & write;
+  red connections ask). Never for AI: administration (FLUSHALL, FLUSHDB, CONFIG, ACL, SHUTDOWN, DEBUG …), KEYS,
+  scripts, transactions, blocking and pub/sub commands. A separate Redis ACL user for AI is supported, and the form
+  copies a read-only `ACL SETUSER` for it.
+
 ## Build order
 1. ✅ Driver check (`sqcheck`)
 2. ✅ Home screen, groups, add/edit connection, Keychain
@@ -169,3 +200,5 @@ One level only. A group exists while at least one connection is in it.
 10. ✅ Multi-select in the schema tree, Alter / Drop schemas
 11. ✅ Drop / truncate tables, import SQL dump (tables and data, or data only); MCP tools for both
 12. ✅ Export SQL dump (tables and data / tables only / data only); MCP `export_sql`
+13. ✅ MySQL 9.x support (tested on 9.7.4); deep red editor for remote connections
+14. ✅ Redis connections: key browser, value editors, console, TLS / ACL users; MCP tools for Redis

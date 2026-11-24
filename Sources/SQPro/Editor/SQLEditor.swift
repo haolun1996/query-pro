@@ -6,6 +6,8 @@ struct SQLEditor: NSViewRepresentable {
     let document: QueryDocument
     /// Schema data for autocomplete.
     var completionSource: CompletionSource?
+    /// Red background, for connections to another machine.
+    var isRemote = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(document: document)
@@ -34,6 +36,7 @@ struct SQLEditor: NSViewRepresentable {
         textView.setSelectedRange(clamped(document.selection, in: textView))
         textView.setWrapsLines(document.wrapsLines)
         textView.setShowsInvisibles(document.showsInvisibles)
+        setBackground(of: scrollView, textView)
         document.editor = textView
         context.coordinator.textView = textView
 
@@ -49,6 +52,16 @@ struct SQLEditor: NSViewRepresentable {
         }
         textView.setWrapsLines(document.wrapsLines)
         textView.setShowsInvisibles(document.showsInvisibles)
+        setBackground(of: scrollView, textView)
+    }
+
+    /// The host can change while the tab is open (Edit Connection), so this runs on every update.
+    private func setBackground(of scrollView: NSScrollView, _ textView: SQLTextView) {
+        let color = isRemote ? SQLTheme.remoteBackground : .textBackgroundColor
+        guard textView.backgroundColor != color else { return }
+        textView.backgroundColor = color
+        scrollView.backgroundColor = color
+        scrollView.verticalRulerView?.needsDisplay = true
     }
 
     private func clamped(_ range: NSRange, in textView: NSTextView) -> NSRange {

@@ -29,7 +29,7 @@ struct QueryArea: View {
                         toolbar
                         Divider()
                         if let document = tab.selectedQuery {
-                            SQLEditor(document: document, completionSource: tab)
+                            SQLEditor(document: document, completionSource: tab, isRemote: tab.profile.isRemote)
                                 .id(document.id)
                         }
                     }

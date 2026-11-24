@@ -216,7 +216,7 @@ public actor MySQLSession {
         let eventLoop = MultiThreadedEventLoopGroup.singleton.next()
         let address = try SocketAddress.makeAddressResolvingHost(profile.host, port: profile.port)
         var tls: TLSConfiguration?
-        if profile.sslMode == .preferred {
+        if profile.sslMode != .disabled {
             // Same behaviour as Workbench's "use SSL if available": encrypt, but accept self-signed server certificates.
             var configuration = TLSConfiguration.makeClientConfiguration()
             configuration.certificateVerification = .none
@@ -257,14 +257,20 @@ public actor MySQLSession {
         }
     }
 
+    /// MySQL 9's `VECTOR` (packed floats). mysql-nio predates it and has no name for it.
+    private static let vectorType = MySQLProtocol.DataType(rawValue: 0xF2)
+
     /// Numbers and dates also use the `binary` character set, so only string-like types count as binary data.
     private static func isBinary(_ definition: MySQLProtocol.ColumnDefinition41) -> Bool {
-        let stringTypes: [MySQLProtocol.DataType] = [.varchar, .varString, .string, .tinyBlob, .mediumBlob, .longBlob, .blob, .bit, .geometry]
+        let stringTypes: [MySQLProtocol.DataType] = [
+            .varchar, .varString, .string, .tinyBlob, .mediumBlob, .longBlob, .blob, .bit, .geometry, vectorType,
+        ]
         return definition.characterSet == .binary && stringTypes.contains(definition.columnType)
     }
 
     private static func typeName(_ type: MySQLProtocol.DataType) -> String {
-        type.name.replacingOccurrences(of: "MYSQL_TYPE_", with: "")
+        if type == vectorType { return "VECTOR" }
+        return type.name.replacingOccurrences(of: "MYSQL_TYPE_", with: "")
     }
 
     private static func text(from buffer: ByteBuffer, binary: Bool) -> String {

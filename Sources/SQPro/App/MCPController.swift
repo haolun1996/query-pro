@@ -104,7 +104,11 @@ final class MCPController {
         let server = MCPHTTPServer(port: port) { connection in
             await provider.token(for: connection)
         } makeServer: { connection in
-            await SQLTools(provider: provider, connection: connection).makeServer(version: version)
+            // Decided when the AI client starts its session, from the connection as saved now.
+            if await provider.profiles().first(where: { $0.id == connection })?.kind == .redis {
+                return await RedisTools(provider: provider, connection: connection).makeServer(version: version)
+            }
+            return await SQLTools(provider: provider, connection: connection).makeServer(version: version)
         }
         do {
             try await server.start()

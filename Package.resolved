@@ -1,5 +1,5 @@
 {
-  "originHash" : "267b2ea9daa89abbd947b58ae02af357fa5b5136dc27e00d0f21e6f9e1eb6705",
+  "originHash" : "b22e9d5daf51bede3775dad852e3b0a75183c9b45c0237559ff5a3d7963377b7",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/vapor/mysql-nio.git",
       "state" : {
-        "revision" : "57fec3f24169ed65365def42e516e579a03172ee",
-        "version" : "1.9.2"
+        "revision" : "3cd7153792ab259a217507b775c14d9ddba3f79f",
+        "version" : "1.9.3"
       }
     },
     {

@@ -14,6 +14,10 @@ enum SQLTheme {
     static let quotedIdentifier = dynamic(light: 0x326D74, dark: 0x67B7A4)
     static let variable = dynamic(light: 0x6C36A9, dark: 0xA167E6)
 
+    /// Editor background for connections to another machine: deep red in dark mode, a red wash in light mode
+    /// (dark text on deep red would be unreadable).
+    static let remoteBackground = dynamic(light: 0xF7DADC, dark: 0x3D0D12)
+
     /// Background band behind the statement under the cursor.
     static let currentStatement = NSColor.labelColor.withAlphaComponent(0.07)
     /// Gutter dot on the first line of each statement.

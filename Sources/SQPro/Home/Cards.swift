@@ -12,28 +12,47 @@ struct ConnectionCard: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(profile.name.isEmpty ? profile.address : profile.name)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(profile.name.isEmpty ? profile.address : profile.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    if profile.kind == .redis {
+                        Text("Redis")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.red.opacity(0.12), in: .capsule)
+                    }
+                }
                 if showsGroup, let group = profile.groupName {
                     Text(group)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
-                Label(profile.user, systemImage: "person.fill")
+                Label(profile.user.isEmpty ? "default" : profile.user, systemImage: "person.fill")
                 Label(profile.address, systemImage: "network")
             }
             .font(.callout)
             .labelStyle(CardLabelStyle())
             .frame(maxWidth: .infinity, minHeight: cardHeight, alignment: .topLeading)
             .padding(12)
-            .background(alignment: .bottomTrailing) { Watermark(systemName: "cylinder.split.1x2.fill") }
+            .background(alignment: .bottomTrailing) {
+                Watermark(systemName: profile.kind == .redis ? "square.stack.3d.up.fill" : "cylinder.split.1x2.fill")
+            }
             .contentShape(cardShape)
         }
         .buttonStyle(.plain)
         .glassEffect(glass(tint: profile.color.color), in: cardShape)
-        .help(profile.defaultSchema.isEmpty ? profile.address : "\(profile.address) · \(profile.defaultSchema)")
+        .help(help)
+    }
+
+    private var help: String {
+        switch profile.kind {
+        case .redis: "Redis · \(profile.address) · db\(profile.redisDatabase)\(profile.sslMode == .required ? " · TLS" : "")"
+        case .mysql: profile.defaultSchema.isEmpty ? profile.address : "\(profile.address) · \(profile.defaultSchema)"
+        }
     }
 }
 

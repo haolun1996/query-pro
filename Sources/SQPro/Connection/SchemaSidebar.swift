@@ -38,7 +38,7 @@ struct SchemaSidebar: View {
                 Text("SCHEMAS")
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
-                MCPConnectionButton(tab: tab)
+                MCPConnectionButton(tabProfile: tab.profile) { tab.bottomPanel = .aiActivity }
                 Spacer()
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { try? await tab.reloadSchemas() }

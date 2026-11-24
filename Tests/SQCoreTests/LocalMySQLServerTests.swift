@@ -11,6 +11,13 @@ import Testing
         #expect(!LocalMySQLServer.isLocal(host: "10.0.0.5"))
     }
 
+    @Test func remoteProfiles() {
+        #expect(!ConnectionProfile(host: "localhost").isRemote)
+        #expect(!ConnectionProfile(host: "127.0.0.1").isRemote)
+        #expect(ConnectionProfile(host: "db.example.com").isRemote)
+        #expect(ConnectionProfile(host: "192.168.1.20").isRemote)
+    }
+
     /// Nothing listens on port 1.
     @Test func closedPort() {
         #expect(!LocalMySQLServer.acceptsConnections(port: 1))

@@ -11,6 +11,8 @@ struct HomeView: View {
     @State private var editor: EditorRequest?
     @State private var renaming: GroupRename?
     @State private var deleting: ConnectionProfile?
+    /// Which way the next page slides in: from the left when going back out of a group.
+    @State private var goingBack = false
 
     private let columns = [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 14)]
 
@@ -22,10 +24,16 @@ struct HomeView: View {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
-                GlassEffectContainer(spacing: 14) {
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
-                        cards
+                // One glass container per page, swapped as a whole: with a single container, each card's glass
+                // morphed into whichever card took its place when a group opened or closed.
+                ZStack(alignment: .topLeading) {
+                    GlassEffectContainer(spacing: 14) {
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+                            cards
+                        }
                     }
+                    .id(page)
+                    .transition(pageTransition)
                 }
                 if isEmpty { emptyState }
             }
@@ -50,6 +58,16 @@ struct HomeView: View {
         .onChange(of: model.groups) {
             if let currentGroup, !model.groups.contains(currentGroup) { self.currentGroup = nil }
         }
+        #if DEBUG
+        .onAppear {
+            // SQPRO_NEW_CONNECTION=redis|mysql: open the Add Connection form (for snapshots).
+            if let kind = ProcessInfo.processInfo.environment["SQPRO_NEW_CONNECTION"].flatMap(DatabaseKind.init(rawValue:)) {
+                var profile = ConnectionProfile()
+                profile.change(kind: kind)
+                editor = EditorRequest(profile: profile, isNew: true)
+            }
+        }
+        #endif
     }
 
     private var currentGroup: String? {
@@ -77,9 +95,23 @@ struct HomeView: View {
     }
 
     private var title: String {
-        if !filter.isEmpty { return "MySQL Connections / Search" }
-        if let currentGroup { return "MySQL Connections / \(currentGroup)" }
-        return "MySQL Connections"
+        if !filter.isEmpty { return "Connections / Search" }
+        if let currentGroup { return "Connections / \(currentGroup)" }
+        return "Connections"
+    }
+
+    /// What the grid shows; a change swaps the whole page.
+    private var page: String {
+        if !filter.isEmpty { return "search" }
+        return currentGroup.map { "group:" + $0 } ?? "home"
+    }
+
+    /// The old page is gone almost at once, so cards never show through each other; the new one slides in a little.
+    private var pageTransition: AnyTransition {
+        .asymmetric(
+            insertion: .offset(x: goingBack ? -36 : 36).combined(with: .opacity),
+            removal: .opacity.animation(.easeOut(duration: 0.08))
+        )
     }
 
     // MARK: Cards
@@ -89,7 +121,10 @@ struct HomeView: View {
         if !filter.isEmpty {
             ForEach(model.search(filter)) { connectionCard($0) }
         } else if let group = currentGroup {
-            BackCard { withAnimation(.snappy) { currentGroup = nil } }
+            BackCard {
+                goingBack = true
+                withAnimation(.snappy) { currentGroup = nil }
+            }
                 .dropDestination(for: String.self) { ids, _ in _ = moveDropped(ids, to: nil) }
             ForEach(model.profiles(inGroup: group)) { connectionCard($0) }
         } else {
@@ -131,7 +166,10 @@ struct HomeView: View {
         GroupCard(
             name: group,
             count: model.profiles(inGroup: group).count,
-            action: { withAnimation(.snappy) { currentGroup = group } },
+            action: {
+                goingBack = false
+                withAnimation(.snappy) { currentGroup = group }
+            },
             onDrop: { moveDropped($0, to: group) }
         )
         .contextMenu {

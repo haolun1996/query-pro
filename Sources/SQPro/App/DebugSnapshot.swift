@@ -7,6 +7,11 @@ import SQCore
 ///
 ///     SQPRO_OPEN="Local POS"          open this saved connection
 ///     SQPRO_OPEN_TEMP=root@localhost:3306   or a throwaway one that is never saved
+///     SQPRO_OPEN_TEMP=redis://[user@]127.0.0.1:6379   …a throwaway Redis one (SQPRO_REDIS_PASSWORD, SQPRO_REDIS_TLS=1)
+///     SQPRO_REDIS_KEY=user:1          Redis: select this key
+///     SQPRO_REDIS_COMMAND="HGETALL user:1"   Redis: run this in the console (several: separated by " ;; ")
+///     SQPRO_REDIS_EDIT=new            Redis: open the New Key sheet
+///     SQPRO_NEW_CONNECTION=redis      open the Add Connection form as Redis (or mysql)
 ///     SQPRO_SQL="select 1;"           put this in the editor and run it
 ///     SQPRO_DEMO_EDITS=1              after SQPRO_SQL: edit a cell, add a row, mark a row deleted (in memory)
 ///     SQPRO_DEMO_EDITS=fail           …and also set a column to NULL
@@ -36,6 +41,10 @@ enum DebugSnapshot {
     static func run(workspace: Workspace, connections: ConnectionsModel) async {
         let environment = ProcessInfo.processInfo.environment
         var target = environment["SQPRO_OPEN"].flatMap { name in connections.profiles.first { $0.name == name } }
+        if let spec = environment["SQPRO_OPEN_TEMP"], spec.hasPrefix("redis://") {
+            await openRedis(spec, workspace: workspace)
+            return
+        }
         if let spec = environment["SQPRO_OPEN_TEMP"], let at = spec.firstIndex(of: "@") {
             let address = spec[spec.index(after: at)...].split(separator: ":")
             target = ConnectionProfile(
@@ -235,6 +244,48 @@ enum DebugSnapshot {
         try? await Task.sleep(for: .seconds(delay))
         save(to: URL(fileURLWithPath: path))
         // An open sheet blocks quitting.
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        NSApp.terminate(nil)
+        try? await Task.sleep(for: .seconds(2))
+        exit(0)
+    }
+
+    @MainActor
+    private static func openRedis(_ spec: String, workspace: Workspace) async {
+        let environment = ProcessInfo.processInfo.environment
+        var rest = spec.dropFirst("redis://".count)
+        var user = ""
+        if let at = rest.firstIndex(of: "@") {
+            user = String(rest[..<at])
+            rest = rest[rest.index(after: at)...]
+        }
+        let address = rest.split(separator: ":")
+        var profile = ConnectionProfile.redis(host: String(address.first ?? "localhost"), port: address.count > 1 ? Int(address[1]) ?? 6379 : 6379)
+        profile.name = "Temp \(spec)"
+        profile.user = user
+        if environment["SQPRO_REDIS_TLS"] == "1" { profile.sslMode = .required }
+        workspace.open(profile, password: environment["SQPRO_REDIS_PASSWORD"])
+        guard let tab = workspace.selectedRedisTab else { return }
+        for _ in 0..<50 where tab.keys.isEmpty || tab.isScanning {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if let name = environment["SQPRO_REDIS_KEY"] {
+            tab.selectedNodeID = "k:" + name
+            await tab.selectionChanged()
+        }
+        for command in (environment["SQPRO_REDIS_COMMAND"] ?? "").components(separatedBy: " ;; ") where !command.isEmpty {
+            tab.consoleInput = command
+            await tab.runConsole()
+        }
+        if environment["SQPRO_REDIS_EDIT"] == "new" { tab.showsNewKey = true }
+        print("REDIS: \(tab.keys.count) keys, db\(tab.database), version \(tab.serverVersion), state \(tab.state)")
+        if let detail = tab.detail { print("KEY: \(detail.key.displayName) \(detail.key.type) \(detail.loaded?.total ?? -1) \(detail.error ?? "")") }
+        for entry in tab.console { print("CONSOLE: \(entry.prompt) \(entry.command) → \(entry.reply.replacingOccurrences(of: "\n", with: " | "))") }
+        guard let path = environment["SQPRO_SNAPSHOT"] else { return }
+        try? await Task.sleep(for: .seconds(Double(environment["SQPRO_SNAPSHOT_DELAY"] ?? "") ?? 2))
+        save(to: URL(fileURLWithPath: path))
         for window in NSApp.windows {
             if let sheet = window.attachedSheet { window.endSheet(sheet) }
         }

@@ -12,6 +12,9 @@ struct MainWindow: View {
                 if let tab = workspace.selectedTab {
                     ConnectionTabView(tab: tab)
                         .id(tab.id)
+                } else if let tab = workspace.selectedRedisTab {
+                    RedisTabView(tab: tab)
+                        .id(tab.id)
                 } else {
                     HomeView()
                 }

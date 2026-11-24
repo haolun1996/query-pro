@@ -30,7 +30,11 @@ struct ConnectionEditorView: View {
         VStack(spacing: 0) {
             Form {
                 Section {
-                    TextField("Name", text: $profile.name, prompt: Text("e.g. Local MySQL"))
+                    Picker("Type", selection: Binding(get: { profile.kind }, set: { profile.change(kind: $0) })) {
+                        ForEach(DatabaseKind.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    TextField("Name", text: $profile.name, prompt: Text(profile.kind == .redis ? "e.g. Cache (production)" : "e.g. Local MySQL"))
                     groupField
                     Picker("Color", selection: $profile.color) {
                         ForEach(ConnectionColor.allCases, id: \.self) { color in
@@ -40,13 +44,30 @@ struct ConnectionEditorView: View {
                     }
                 }
 
-                Section("Server") {
+                Section {
                     TextField("Host", text: $profile.host)
                     TextField("Port", value: $profile.port, format: .number.grouping(.never))
-                    TextField("Username", text: $profile.user)
+                    TextField("Username", text: $profile.user, prompt: Text(profile.kind == .redis ? "default (password only)" : ""))
                     SecureField("Password", text: $password, prompt: Text(isNew ? "Optional" : "Unchanged"))
                         .onChange(of: password) { passwordChanged = true }
-                    TextField("Default Schema", text: $profile.defaultSchema, prompt: Text("Optional"))
+                    switch profile.kind {
+                    case .mysql:
+                        TextField("Default Schema", text: $profile.defaultSchema, prompt: Text("Optional"))
+                    case .redis:
+                        TextField("Database", value: $profile.redisDatabase, format: .number.grouping(.never))
+                        Toggle("Use TLS", isOn: Binding(
+                            get: { profile.sslMode == .required },
+                            set: { profile.sslMode = $0 ? .required : .disabled }
+                        ))
+                    }
+                } header: {
+                    Text("Server")
+                } footer: {
+                    if profile.kind == .redis {
+                        Text("Cloud services (ElastiCache with in-transit encryption, Redis Cloud, Upstash, Azure) need TLS and usually a username. Certificates aren't checked, so self-signed and private-CA servers work.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section {
@@ -56,7 +77,7 @@ struct ConnectionEditorView: View {
                         Text("Read & write").tag(MCPAccess.readWrite)
                     }
                     if profile.mcpAccess != .hidden {
-                        Toggle("Use a separate MySQL user for AI", isOn: $usesAIUser)
+                        Toggle("Use a separate \(profile.kind.title) user for AI", isOn: $usesAIUser)
                         if usesAIUser {
                             TextField("AI username", text: $profile.mcpUser, prompt: Text("e.g. ai_reader"))
                             SecureField("AI password", text: $aiPassword, prompt: Text(profile.usesSeparateMCPUser && !isNew ? "Unchanged" : "Optional"))
@@ -65,10 +86,13 @@ struct ConnectionEditorView: View {
                                 Button("Test AI Login") { runTest(asAI: true) }
                                     .disabled(test == .testing || !cleaned.usesSeparateMCPUser)
                                 Spacer()
-                                Button(copiedExample ? "Copied" : "Copy SQL for a Read-Only User", systemImage: copiedExample ? "checkmark" : "doc.on.doc") {
+                                Button(
+                                    copiedExample ? "Copied" : profile.kind == .redis ? "Copy ACL for a Read-Only User" : "Copy SQL for a Read-Only User",
+                                    systemImage: copiedExample ? "checkmark" : "doc.on.doc"
+                                ) {
                                     copyExampleSQL()
                                 }
-                                .help("CREATE USER and GRANT SELECT statements to run as root")
+                                .help(profile.kind == .redis ? "An ACL SETUSER command to run as an admin user" : "CREATE USER and GRANT SELECT statements to run as root")
                             }
                             .controlSize(.small)
                         }
@@ -114,28 +138,38 @@ struct ConnectionEditorView: View {
     private var accessHelp: String {
         let level = switch profile.mcpAccess {
         case .hidden: "AI clients can't see this connection."
+        case .readOnly where profile.kind == .redis: "AI clients can scan keys, read values and run read-only commands."
         case .readOnly: "AI clients can look at the schema and run SELECT / SHOW queries."
         case .readWrite where profile.color.isProduction: "AI clients can also change data. Each change asks you first, because this is a red (production) connection."
         case .readWrite: "AI clients can also change data and schema."
         }
         guard profile.mcpAccess != .hidden else { return level }
         let login = usesAIUser
-            ? " They log in as \(cleaned.effectiveMCPUser), so MySQL only lets them do what that user is granted."
-            : " They log in as \(profile.user), the same user as you."
+            ? " They log in as \(cleaned.effectiveMCPUser), so \(profile.kind.title) only lets them do what that user is allowed."
+            : " They log in as \(profile.user.isEmpty ? "the default user" : profile.user), the same user as you."
         return level + login
     }
 
     /// A read-only MySQL account for AI, limited to the default schema if there is one.
     private func copyExampleSQL() {
         let user = cleaned.usesSeparateMCPUser ? cleaned.effectiveMCPUser : "ai_reader"
+        guard profile.kind == .mysql else {
+            // Reads only, nothing that blocks or administers the server; INFO for server_info, PING for health checks.
+            copy("ACL SETUSER \(user) on >choose-a-strong-password ~* &* +@read -@dangerous +info +ping")
+            return
+        }
         let host = ["localhost", "127.0.0.1", "::1"].contains(profile.host) ? "localhost" : "%"
         let schema = profile.defaultSchema.isEmpty ? "your_database" : profile.defaultSchema
         let sql = """
             CREATE USER '\(user)'@'\(host)' IDENTIFIED BY 'choose-a-strong-password';
             GRANT SELECT, SHOW VIEW ON `\(schema)`.* TO '\(user)'@'\(host)';
             """
+        copy(sql)
+    }
+
+    private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(sql, forType: .string)
+        NSPasteboard.general.setString(text, forType: .string)
         copiedExample = true
         Task {
             try? await Task.sleep(for: .seconds(2))
@@ -213,6 +247,20 @@ struct ConnectionEditorView: View {
         let password = asAI ? aiPassword : password
         if asAI { profile.user = profile.effectiveMCPUser }
         Task {
+            if profile.kind == .redis {
+                let session = RedisSession(profile: profile, password: password)
+                do {
+                    try await session.connect()
+                    let info = try await session.call("INFO", "server").string ?? ""
+                    await session.close()
+                    let version = RedisBrowser.infoField("redis_version", in: info) ?? ""
+                    test = .success(asAI ? "AI login works · \(profile.user)" : "Connected · Redis \(version)")
+                } catch {
+                    await session.close()
+                    test = .failure(ErrorText.message(for: error))
+                }
+                return
+            }
             let session = MySQLSession(profile: profile, password: password)
             do {
                 try await session.connect()

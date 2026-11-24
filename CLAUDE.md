@@ -1,6 +1,6 @@
 # Query Pro
 
-Native macOS MySQL client (macOS 26+, Liquid Glass). Workbench-style layout, only the features we use.
+Native macOS MySQL and Redis client (macOS 26+, Liquid Glass). Workbench-style layout, only the features we use.
 `SPEC.md` is the product spec and build order; keep its ✅ list current.
 
 ## Build and run
@@ -9,7 +9,8 @@ Native macOS MySQL client (macOS 26+, Liquid Glass). Workbench-style layout, onl
 scripts/bundle.sh --debug --open   # build dist/Query Pro.app, quit the running copy, launch it
 scripts/bundle.sh --sign "Apple Development: haolun"   # release build signed with the personal identity
 swift test                         # SQCore + SQMCP tests (SQL parsing, autocomplete, export, Keychain, MCP tools)
-.build/debug/sqcheck localhost 3306 root "" "select 1"   # CLI connection check; password from SQ_PASSWORD
+SQPRO_REDIS=127.0.0.1:6390 SQPRO_REDIS_PASSWORD=… swift test   # also the live Redis tests (skipped otherwise); see Gotchas
+.build/debug/sqcheck localhost 3306 root "" "select 1"   # CLI connection check; password from SQ_PASSWORD, SQ_SSL=disabled for no TLS
 ```
 
 Plain SwiftPM, no Xcode project. The app is ad-hoc signed by `bundle.sh` unless `--sign` names a Keychain identity.
@@ -23,12 +24,13 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
 
 | Path | What |
 |---|---|
-| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `SQLCompletion` (autocomplete context + suggestions), `SQLAutoCorrect` (keyword typos), `SchemaScript` (Alter / Drop Schemas, Drop / Truncate Tables SQL), `SQLDump`/`SQLDumpImport`/`SQLDumpExport` (`.sql` dumps), `ResultExport` (CSV/JSON/INSERT), `CSV`/`CSVImportPlan` (import), `QueryHistoryStore`, `SavedQuery`/`SavedQueryStore`, `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText` |
-| `Sources/SQMCP` | No UI. `MCPHTTPServer` (NIO HTTP on 127.0.0.1, one endpoint per connection at `/mcp/<connection id>` with its own bearer token, one MCP session per client, adapted from swift-sdk's conformance server) and `SQLTools` (ten tools scoped to one connection). Talks to the app through `MCPProvider` |
+| `Sources/SQCore` | No UI. `MySQLSession` (actor, mysql-nio), `TextQueryCommand`, `SQL` (tokenizer, statement splitter, auto `LIMIT`, beautify, quoting), `SQLCompletion` (autocomplete context + suggestions), `SQLAutoCorrect` (keyword typos), `SchemaScript` (Alter / Drop Schemas, Drop / Truncate Tables SQL), `SQLDump`/`SQLDumpImport`/`SQLDumpExport` (`.sql` dumps), `ResultExport` (CSV/JSON/INSERT), `CSV`/`CSVImportPlan` (import), `QueryHistoryStore`, `SavedQuery`/`SavedQueryStore`, `ConnectionProfile`/`ConnectionStore`, `Keychain`, `ErrorText`. Redis: `RESP` (protocol), `RedisSession` (actor, NIO), `RedisCommand` (console parsing, redis-cli output, AI access rules), `RedisBrowser` (SCAN, values, key tree) |
+| `Sources/SQMCP` | No UI. `MCPHTTPServer` (NIO HTTP on 127.0.0.1, one endpoint per connection at `/mcp/<connection id>` with its own bearer token, one MCP session per client, adapted from swift-sdk's conformance server) and `SQLTools` (ten tools scoped to one connection) or `RedisTools` (six, for Redis connections). Talks to the app through `MCPProvider` |
 | `Sources/SQPro/App` | `SQProApp`, `Workspace` (tabs), `ConnectionsModel` (saved connections), `SavedQueriesModel`, `TabStrip`, `QueryCommands` (menus + shortcuts), `SettingsView`, `DebugSnapshot` |
 | `Sources/SQPro/Home` | Home screen: connection cards, groups, add/edit form |
 | `Sources/SQPro/Connection` | `ConnectionTab` (model for one open connection), schema sidebar, query area, table info tab, Action Output, History, CSV import sheet |
 | `Sources/SQPro/Editor` | `SQLTextView` (TextKit 1), `CompletionPopup` (autocomplete list), line number ruler, theme, SwiftUI wrappers |
+| `Sources/SQPro/Redis` | `RedisTab` (model: two sessions, keys, value, console), key sidebar, value editors, console, New Key sheet |
 | `Sources/SQPro/Results` | `ResultTab` (one result set + filter/sort/edits), `ResultGrid` (NSTableView), results panel, Form Editor / Field Types / Query Stats |
 
 ## Conventions
@@ -48,6 +50,14 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
 - Schema tree rows need `.listRowSeparator(.hidden)`; double-click goes through `.contextMenu(forSelectionType:primaryAction:)`, not `onTapGesture(count: 2)` (the List swallows it).
 - Each connection tab has **two sessions**: one for user queries, one for metadata (schema tree, table info), so a slow query never blocks the sidebar. Stop sends `KILL QUERY` from a third, short-lived connection.
 - Shortcuts are menu items in `QueryCommands`, so they work while the NSTextView has focus.
+- **Remote = red editor**: `ConnectionProfile.isRemote` (not `LocalMySQLServer.isLocal(host:)`) makes `SQLEditor` use
+  `SQLTheme.remoteBackground`; the ruler fills with the text view's background, so it follows. To see it locally, open
+  `SQPRO_OPEN_TEMP=root@0.0.0.0:3306`: it reaches local MySQL but isn't a local host name.
+- **mysql-nio ≥ 1.9.3**: older versions keep the handshake nonce's trailing NUL, so `caching_sha2_password` logins
+  without TLS fail for passwords of 20+ characters (MySQL 8 and 9). MySQL 9's `VECTOR` (type 0xF2) has no name in
+  mysql-nio; `MySQLSession` names it and treats it as binary. To test 9.x: `brew install mysql@9.7` (keg-only), then
+  run `mysqld --no-defaults --initialize-insecure` and `mysqld --no-defaults` with a scratch datadir, another port and
+  a short `--socket` path (macOS limit is 103 characters).
 - The grid's text is single-line; values over 500 characters are cut for display only.
 - **Editing results**: `ConnectionTab.prepareEditing` makes a result editable only when its table columns come from one
   table and include its whole primary key. Edits are overlays (`RowEdits`) on the original rows; `ChangeScript`
@@ -95,6 +105,19 @@ UserDefaults keys and `SQPRO_*` env vars stay as they are: renaming them would o
 - **CSV import** runs on a fresh `MySQLSession` (the tab keeps its password in memory for this), never the query
   session, so the editor stays usable. `CSV.parse` returns `nil` for unquoted empty / `\N` fields so NULL and ''
   survive a round trip with `ResultExport.csv`.
+- **Redis**: `ConnectionProfile.kind` (`.mysql` default, so old files load) picks `ConnectionTab` or `RedisTab` in
+  `Workspace.open`, and `SQLTools` or `RedisTools` in `MCPController`. Both tabs are `WorkspaceTab`; `selectedTab` is
+  the MySQL one, so menu commands ignore Redis tabs. `ForEach` over `[any WorkspaceTab]` needs the `TabRef` wrapper: a
+  key path on the existential crashes the Swift 6.4 compiler. Redis TLS is `SSLMode.required` (no negotiation); the
+  form's toggle maps to it. Values are `Data` everywhere (Redis is binary-safe): show them with
+  `RedisCommand.display`, and keep binary values read-only in the editors. `RedisCommand.access` decides what AI may
+  run; unknown commands count as writes. The browser session's `SELECT` is the picker's; the console has its own
+  session and database. `RedisSession.close()` makes a waiting command fail without reconnecting (console Stop).
+  Live tests: run `redis-server` (Homebrew) on a spare port with `user default on >pass ~* &* +@all`, a
+  `tls-port` with a self-signed cert, and a read-only ACL user; set `SQPRO_REDIS`, `SQPRO_REDIS_PASSWORD`,
+  `SQPRO_REDIS_TLS_PORT`, `SQPRO_REDIS_ACL_USER`, `SQPRO_REDIS_ACL_PASSWORD`. Tests only write `qp:test:*` / `qp:mcp:*`.
+  Snapshots: `SQPRO_OPEN_TEMP=redis://[user@]host:port` + `SQPRO_REDIS_PASSWORD`, `SQPRO_REDIS_TLS=1`,
+  `SQPRO_REDIS_KEY`, `SQPRO_REDIS_COMMAND` ("a ;; b"), `SQPRO_REDIS_EDIT=new`, `SQPRO_NEW_CONNECTION=redis`.
 - **Local server** (`LocalMySQLServer`, SQCore): status is a TCP connect to 127.0.0.1:3306, then `launchctl print`
   (no root). Start/Stop run `launchctl kickstart` / `kill TERM` on Oracle's system LaunchDaemon through
   `osascript … with administrator privileges`; never sudo. `LocalServerController` is shared by the home header

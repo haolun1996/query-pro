@@ -5,14 +5,17 @@ import SQMCP
 /// "● MCP" at the right of a connection's query tab row. Green when Claude can use this connection,
 /// grey when the server is off, struck through when the connection is hidden from AI.
 struct MCPConnectionButton: View {
-    let tab: ConnectionTab
+    /// As opened; the saved copy is looked up by id.
+    let tabProfile: ConnectionProfile
+    /// "Show All" in the popover: the tab's AI Activity view.
+    let showAllActivity: () -> Void
     @Environment(MCPController.self) private var mcp
     @Environment(ConnectionsModel.self) private var connections
     @State private var isOpen = false
 
     /// The saved profile, so access changes made here or in Edit Connection show up right away.
     private var profile: ConnectionProfile {
-        connections.profile(id: tab.profile.id) ?? tab.profile
+        connections.profile(id: tabProfile.id) ?? tabProfile
     }
 
     private var isRunning: Bool {
@@ -44,13 +47,13 @@ struct MCPConnectionButton: View {
         .buttonStyle(.plain)
         .help("Claude Code access to this connection")
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
-            MCPConnectionPopover(tab: tab, profile: profile) { isOpen = false }
+            MCPConnectionPopover(showAllActivity: showAllActivity, profile: profile) { isOpen = false }
         }
     }
 }
 
 private struct MCPConnectionPopover: View {
-    let tab: ConnectionTab
+    let showAllActivity: () -> Void
     let profile: ConnectionProfile
     let close: () -> Void
     @Environment(MCPController.self) private var mcp
@@ -136,7 +139,7 @@ private struct MCPConnectionPopover: View {
                 Spacer()
                 if !entries.isEmpty {
                     Button("Show All") {
-                        tab.bottomPanel = .aiActivity
+                        showAllActivity()
                         close()
                     }
                     .buttonStyle(.link)
@@ -171,7 +174,9 @@ private struct MCPConnectionPopover: View {
         let access = profile.mcpAccess == .readWrite
             ? (profile.color.isProduction ? "can change data (each change asks you first)" : "can change data")
             : "can only read"
-        let login = profile.usesSeparateMCPUser ? "its own MySQL user \(user)" : "\(user), the same user as you"
+        let login = profile.usesSeparateMCPUser
+            ? "its own \(profile.kind.title) user \(user)"
+            : user.isEmpty ? "the default user, the same as you" : "\(user), the same user as you"
         return "Claude \(access) and logs in as \(login). Set a separate AI user in Edit Connection."
     }
 

@@ -2,14 +2,17 @@ import Foundation
 import SQCore
 
 // Usage: sqcheck <host> <port> <user> [schema] [sql]
-// The password is read from SQ_PASSWORD, or asked for interactively.
+// The password is read from SQ_PASSWORD, or asked for interactively. SQ_SSL=disabled connects without TLS.
 let args = CommandLine.arguments
 guard args.count >= 4, let port = Int(args[2]) else {
     print("usage: sqcheck <host> <port> <user> [schema] [sql]")
     exit(2)
 }
 let password = ProcessInfo.processInfo.environment["SQ_PASSWORD"] ?? String(cString: getpass("Password: "))
-let profile = ConnectionProfile(name: "check", host: args[1], port: port, user: args[3], defaultSchema: args.count > 4 ? args[4] : "")
+let sslMode = SSLMode(rawValue: ProcessInfo.processInfo.environment["SQ_SSL"] ?? "") ?? .preferred
+let profile = ConnectionProfile(
+    name: "check", host: args[1], port: port, user: args[3], defaultSchema: args.count > 4 ? args[4] : "", sslMode: sslMode
+)
 let session = MySQLSession(profile: profile, password: password)
 
 func show(_ result: QueryResult) {

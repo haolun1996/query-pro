@@ -9,7 +9,7 @@ let package = Package(
         .executable(name: "sqcheck", targets: ["sqcheck"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/vapor/mysql-nio.git", from: "1.9.2"),
+        .package(url: "https://github.com/vapor/mysql-nio.git", from: "1.9.3"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.1"),
